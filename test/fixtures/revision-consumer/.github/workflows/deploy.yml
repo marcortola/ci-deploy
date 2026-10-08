@@ -10,7 +10,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: marcortola/ci-deploy/setup@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
-      - uses: marcortola/ci-deploy/deploy@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+      - uses: marcortola/ci-deploy/setup@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/deploy@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
         with:
           rollback: auto

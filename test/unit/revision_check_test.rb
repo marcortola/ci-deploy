@@ -5,10 +5,13 @@ require_relative "../test_helper"
 class RevisionCheckTest < Minitest::Test
   SHA = "1111111111111111111111111111111111111111"
   OTHER = "2222222222222222222222222222222222222222"
-  TEMPLATE = File.join(ROOT, "launcher", "ci-deploy-local")
 
+  # A git checkout: the check lists the files git knows about.
   def component
-    @component ||= File.join(tmpdir, "component").tap { |dir| FileUtils.mkdir_p(File.join(dir, ".github/workflows")) }
+    @component ||= File.join(tmpdir, "component").tap do |dir|
+      FileUtils.mkdir_p(File.join(dir, ".github/workflows"))
+      system("git", "init", "-q", dir, exception: true)
+    end
   end
 
   def write(path, content)
@@ -22,7 +25,7 @@ class RevisionCheckTest < Minitest::Test
   end
 
   def check(**options)
-    CiDeploy::RevisionCheck.new(component: component, launcher_template: TEMPLATE, **options).call
+    CiDeploy::RevisionCheck.new(component: component, **options).call
   end
 
   def test_one_sha_across_top_level_workflows_passes
@@ -94,20 +97,50 @@ class RevisionCheckTest < Minitest::Test
     assert_includes result.errors.join("\n"), "this check runs at #{OTHER}"
   end
 
-  def test_vendored_launcher_must_match_the_template
+  def test_references_outside_github_are_rejected
     write(".github/workflows/deploy.yml", workflow("setup", SHA))
-    write("bin/ci-deploy-local", File.read(TEMPLATE))
-    assert check(launcher: "bin/ci-deploy-local").ok?
+    write("scripts/deploy.sh", "gh workflow run x # marcortola/ci-deploy/deploy@#{SHA}\n")
+    result = check
+    refute result.ok?
+    assert_includes result.errors.join("\n"), "scripts/deploy.sh:1 references marcortola/ci-deploy"
+  end
 
-    write("bin/ci-deploy-local", "#{File.read(TEMPLATE)}\n# local edit\n")
-    refute check(launcher: "bin/ci-deploy-local").ok?
-    refute check(launcher: "bin/missing").ok?
+  def test_tracked_files_are_scanned_and_ignored_ones_are_not
+    write(".github/workflows/deploy.yml", workflow("setup", SHA))
+    write(".gitignore", "vendor/\n")
+    write("vendor/x/action.yml", "uses: marcortola/ci-deploy/deploy@#{OTHER}\n")
+    assert check.ok?, check.errors.join("\n")
+
+    write("docs/notes.md", "uses: marcortola/ci-deploy/deploy@#{SHA}\n")
+    system("git", "-C", component, "add", "docs/notes.md", exception: true)
+    refute check.ok?
+  end
+
+  def test_owner_and_repository_match_case_insensitively
+    write(".github/workflows/deploy.yml", workflow("setup", SHA) + "      - uses: MarcOrtola/CI-Deploy/deploy@#{OTHER}\n")
+    result = check
+    refute result.ok?
+    assert_includes result.errors.join("\n"), "2 different revisions"
+
+    write(".github/workflows/deploy.yml", workflow("setup", SHA))
+    write(".github/workflows/shared/x/action.yml", "uses: Marcortola/Ci-Deploy/deploy@#{SHA}\n")
+    refute check.ok?
+  end
+
+  def test_a_directory_outside_git_fails
+    dir = File.join(tmpdir, "plain")
+    FileUtils.mkdir_p(File.join(dir, ".github/workflows"))
+    File.write(File.join(dir, ".github/workflows/deploy.yml"), workflow("setup", SHA))
+    result = CiDeploy::RevisionCheck.new(component: dir).call
+    refute result.ok?
+    assert_includes result.errors.join("\n"), "is not a git checkout"
   end
 
   def test_ref_from_action_path
     assert_equal SHA, CiDeploy::RevisionCheck.ref_from_action_path("/home/runner/work/_actions/marcortola/ci-deploy/#{SHA}/revision-check/..")
     assert_equal "", CiDeploy::RevisionCheck.ref_from_action_path("/home/runner/work/app/app/./revision-check/..")
     assert_equal "", CiDeploy::RevisionCheck.ref_from_action_path("/home/runner/work/_actions/marcortola/ci-deploy-fork/#{SHA}/x")
+    assert_equal SHA, CiDeploy::RevisionCheck.ref_from_action_path("/home/runner/work/_actions/MarcOrtola/CI-Deploy/#{SHA}/revision-check/..")
   end
 
   def test_cli_derives_its_own_ref_from_the_action_path

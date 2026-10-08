@@ -3,7 +3,7 @@
 ## A bad ci-deploy release in a component
 
 Pin the component back to the previous release's SHA: revert the pull request that bumped the
-pins (all references and the vendored launcher change together, so the revert restores both).
+pins (all references change together, so the revert restores every one).
 The revision check confirms one revision. Nothing on the hosts depends on the ci-deploy version,
 except:
 

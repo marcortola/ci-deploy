@@ -3,7 +3,7 @@
 # command from the incoming image through the shared helper.
 set -eu
 # shellcheck source=lib/sh/hooks.sh
-. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action or launcher}/hooks.sh"
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
 
 {
     echo "kamal=$(command -v kamal)"

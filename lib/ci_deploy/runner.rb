@@ -18,14 +18,15 @@ module CiDeploy
     end
 
     # Streams the command's output and returns it with the exit status. A command that cannot be
-    # started (missing executable) reports status 127, as a shell would.
-    def run(*argv, echo: true, quiet: false)
+    # started (missing executable) reports status 127, as a shell would. `env` adds to (or, with a
+    # nil value, removes from) the environment for this command only.
+    def run(*argv, echo: true, quiet: false, env: {})
       argv = argv.flatten.map(&:to_s)
       @out.puts "+ #{display(argv)}" if echo
       output = +""
       options = {}
       options[:chdir] = @chdir if @chdir
-      Open3.popen2e(@env, *argv, **options) do |stdin, stream, wait|
+      Open3.popen2e(@env.merge(env), *argv, **options) do |stdin, stream, wait|
         stdin.close
         stream.each_line do |line|
           output << line

@@ -281,3 +281,15 @@ class DeployTest
     refute(@runner.kamal_calls.any? { |args| %w[deploy rollback].include?(args.first) })
   end
 end
+
+class DeployTest
+  def test_before_deploy_command_receives_the_command_env
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+
+    deploy(before_deploy: %w[pause-tool], command_env: { "KAMAL_DESTINATION" => "staging" })
+
+    index = @runner.calls.index { |argv| argv.first == "pause-tool" }
+    refute_nil index
+    assert_equal({ "KAMAL_DESTINATION" => "staging" }, @runner.envs[index])
+  end
+end

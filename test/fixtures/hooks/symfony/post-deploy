@@ -2,7 +2,7 @@
 # Example consumer hook (Symfony): orphaned-role cleanup, then maintenance against the new image.
 set -eu
 # shellcheck source=lib/sh/hooks.sh
-. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action or launcher}/hooks.sh"
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
 
 if ci_deploy_is_rollback; then
     exit 0

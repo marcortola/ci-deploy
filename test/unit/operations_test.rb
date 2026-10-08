@@ -71,6 +71,30 @@ class OperationsTest < Minitest::Test
     assert_equal [%w[proxy reboot -h192.0.2.10]], argvs(operation: "kamal", args: "proxy reboot -h192.0.2.10")
   end
 
+  def test_stopping_or_removing_the_proxy_or_the_app_needs_an_explicit_target
+    ["proxy stop", "proxy remove", "remove -y", "upgrade -y", "proxy upgrade", "--roles web proxy reboot -y", "-y remove"].each do |args|
+      assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+    end
+    assert_equal [%w[proxy stop --hosts=192.0.2.10]], argvs(operation: "kamal", args: "proxy stop --hosts=192.0.2.10")
+    assert_equal [%w[remove -y -h 192.0.2.10]], argvs(operation: "kamal", args: "remove -y -h 192.0.2.10")
+    assert_equal [%w[proxy boot]], argvs(operation: "kamal", args: "proxy boot")
+  end
+
+  def test_an_empty_hosts_or_roles_filter_is_refused
+    ["proxy reboot -y --hosts=,", %(proxy reboot -y --hosts ""), "proxy reboot -y -h,", %(proxy reboot -y -h ""), "proxy reboot -y --hosts", "proxy reboot -y -h= ",
+     "app details --roles=", %(app details -r ""), "app details --roles=, ,", "app details -r,"].each do |args|
+      error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+      assert_includes error.message, "needs at least one value", args
+    end
+  end
+
+  def test_an_empty_hosts_or_roles_input_item_is_refused_in_the_catalog
+    [{ operation: "proxy-reboot", hosts: "," }, { operation: "proxy-reboot", hosts: " , " }, { operation: "host-exec", command: "uptime", hosts: "192.0.2.10," },
+     { operation: "host-exec", command: "uptime", roles: "," }, { operation: "logs", target: "app", roles: "web,,worker" }].each do |inputs|
+      invalid(**inputs)
+    end
+  end
+
   def test_free_arguments_are_split_like_words_and_never_interpreted
     assert_equal [["app", "exec", "echo $(id) `id`; rm -rf / | cat > x", ";", "&&", "$HOME"]],
                  argvs(operation: "kamal", args: %(kamal app exec 'echo $(id) `id`; rm -rf / | cat > x' \; '&&' '$HOME'))

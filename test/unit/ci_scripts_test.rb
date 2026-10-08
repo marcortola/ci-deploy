@@ -2,68 +2,7 @@
 
 require_relative "../test_helper"
 
-# The shared CI scripts behind the container, dependabot-merge, terraform and setup actions, with
-# recording stubs for docker, gh and terraform.
-class ContainerBuildTest < Minitest::Test
-  SCRIPT = File.join(ROOT, "lib/sh/container-build.sh")
-
-  def setup
-    @stubs = TestSupport::Stubs.new(tmpdir)
-    @stubs.add("docker", <<~'SH')
-      if [ "$1" = login ]; then cat > "$0.password"; fi
-      if [ "$1" = run ] && [ -n "${SMOKE_FAIL:-}" ]; then exit 1; fi
-      exit 0
-    SH
-  end
-
-  def build(env)
-    Open3.capture2e(clean_env({ "PATH" => @stubs.path }.merge(env)), "bash", SCRIPT, chdir: tmpdir, **spawn_options)
-  end
-
-  def test_builds_every_tag_then_smoke_tests_the_first_without_the_runner_shell_and_does_not_push_by_default
-    marker = File.join(tmpdir, "pwned")
-    output, status = build("IMAGE_TAGS" => "example/app:ci\nexample/app:latest\n", "BUILD_FILE" => "docker/Dockerfile",
-                           "BUILD_TARGET" => "runtime", "BUILD_ARGS" => "APP_ENV=test\nNPM_TOKEN", "BUILD_CACHE" => "gha",
-                           "SMOKE_COMMANDS" => "php -v\ntest -f /app/vendor/autoload.php; touch #{marker}",
-                           "SMOKE_RUN_ARGS" => "--network none --env-file .env.example")
-    assert status.success?, output
-    calls = @stubs.calls_to("docker")
-    assert_equal ["buildx", "build", "--load", "--progress", "plain", "--file", "docker/Dockerfile", "--target", "runtime",
-                  "--tag", "example/app:ci", "--tag", "example/app:latest", "--build-arg", "APP_ENV=test", "--build-arg", "NPM_TOKEN",
-                  "--cache-from", "type=gha", "--cache-to", "type=gha,mode=max", "."], calls[0]
-    assert_equal ["run", "--rm", "--network", "none", "--env-file", ".env.example", "example/app:ci", "sh", "-c", "php -v"], calls[1]
-    assert_equal "test -f /app/vendor/autoload.php; touch #{marker}", calls[2].last
-    refute File.exist?(marker)
-    assert_equal 3, calls.size
-  end
-
-  def test_a_failed_smoke_command_stops_before_publishing
-    _output, status = build("IMAGE_TAGS" => "example/app:ci", "SMOKE_COMMANDS" => "true", "PUSH" => "true", "SMOKE_FAIL" => "1")
-    refute status.success?
-    refute(@stubs.calls_to("docker").any? { |call| call.first == "push" })
-  end
-
-  def test_publishes_every_tag_after_logging_in_with_the_password_on_stdin
-    _output, status = build("IMAGE_TAGS" => "registry.example.com/app:1\nregistry.example.com/app:latest", "PUSH" => "true",
-                            "BUILD_CACHE" => "none", "REGISTRY" => "registry.example.com", "REGISTRY_USER" => "ci",
-                            "REGISTRY_PASSWORD" => "example-password")
-    assert status.success?
-    calls = @stubs.calls_to("docker")
-    assert_equal ["login", "registry.example.com", "--username", "ci", "--password-stdin"], calls[1]
-    assert_equal [%w[push registry.example.com/app:1], %w[push registry.example.com/app:latest]], calls.last(2)
-    assert_equal "example-password", File.read(File.join(@stubs.bin, "docker.password"))
-    refute(calls.flatten.include?("example-password"))
-  end
-
-  def test_tags_are_required_and_the_cache_is_validated
-    _output, status = build("IMAGE_TAGS" => " \n")
-    assert_equal 64, status.exitstatus
-    _output, status = build("IMAGE_TAGS" => "a:b", "BUILD_CACHE" => "s3")
-    assert_equal 64, status.exitstatus
-    assert_empty @stubs.calls
-  end
-end
-
+# The shared scripts behind the dependabot-merge and setup actions, with a recording stub for gh.
 class DependabotMergeTest < Minitest::Test
   SCRIPT = File.join(ROOT, "lib/sh/dependabot-merge.sh")
 
@@ -120,70 +59,6 @@ class DependabotMergeTest < Minitest::Test
   end
 end
 
-class TerraformCheckTest < Minitest::Test
-  SCRIPT = File.join(ROOT, "lib/sh/terraform-check.sh")
-
-  def setup
-    @stubs = TestSupport::Stubs.new(tmpdir)
-    @stubs.add("terraform", <<~'SH')
-      for a in "$@"; do case "$a" in
-        fmt) [ -z "${FMT_FAIL:-}" ] || exit 3 ;;
-        init) n=$(cat "$0.init" 2>/dev/null || echo 0); echo $((n + 1)) > "$0.init"; [ "$n" -ge "${INIT_FAILS:-0}" ] || exit 1 ;;
-        validate) case "$1" in *"${VALIDATE_FAIL:-none}") exit 1 ;; esac ;;
-      esac; done
-      exit 0
-    SH
-    @root = File.join(tmpdir, "terraform")
-    %w[environments/production environments/staging modules/network].each { |dir| FileUtils.mkdir_p(File.join(@root, dir)) }
-    File.write(File.join(@root, "environments/production/backend.tf"), "")
-    File.write(File.join(@root, "environments/staging/backend.tf"), "")
-    FileUtils.mkdir_p(File.join(@root, "environments/staging/.terraform/modules/x"))
-    File.write(File.join(@root, "environments/staging/.terraform/modules/x/backend.tf"), "")
-  end
-
-  def check(env = {})
-    base = { "PATH" => @stubs.path, "TF_ROOT" => @root, "TF_RETRY_DELAY" => "0" }
-    Open3.capture2e(clean_env(base.merge(env)), "bash", SCRIPT, **spawn_options)
-  end
-
-  def test_discovers_root_modules_by_backend_and_passes_init_arguments
-    output, status = check("TF_INIT_ARGS" => "-backend=false -input=false -lockfile=readonly")
-    assert status.success?, output
-    calls = @stubs.calls_to("terraform")
-    assert_equal ["fmt", "-check", "-diff", "-recursive", @root], calls[0]
-    assert_equal ["-chdir=#{@root}/environments/production", "init", "-backend=false", "-input=false", "-lockfile=readonly", "-no-color"], calls[1]
-    assert_equal ["-chdir=#{@root}/environments/production", "validate", "-no-color"], calls[2]
-    assert_equal "-chdir=#{@root}/environments/staging", calls[3][0]
-    assert_equal 5, calls.size, "modules under .terraform are not root modules"
-  end
-
-  def test_init_is_retried_then_succeeds
-    output, status = check("INIT_FAILS" => "2", "TF_DIRECTORIES" => "#{@root}/environments/production", "TF_FMT" => "false")
-    assert status.success?, output
-    assert_equal 3, @stubs.calls_to("terraform").count { |call| call[1] == "init" }
-  end
-
-  def test_every_module_is_checked_after_a_failure_and_the_run_fails
-    output, status = check("VALIDATE_FAIL" => "environments/production", "FMT_FAIL" => "1")
-    refute status.success?
-    assert_includes output, "formatting under #{@root}"
-    assert_includes output, "environments/production (validate)"
-    assert(@stubs.calls_to("terraform").any? { |call| call[0] == "-chdir=#{@root}/environments/staging" && call[1] == "validate" })
-  end
-
-  def test_init_exhausting_its_attempts_fails_without_validating
-    output, status = check("INIT_FAILS" => "9", "TF_INIT_ATTEMPTS" => "2", "TF_DIRECTORIES" => "#{@root}/environments/staging", "TF_FMT" => "false")
-    refute status.success?
-    assert_includes output, "after 2 attempts"
-    refute(@stubs.calls_to("terraform").any? { |call| call[1] == "validate" })
-  end
-
-  def test_no_root_module_is_an_error
-    _output, status = check("TF_ROOT" => File.join(@root, "modules"))
-    refute status.success?
-  end
-end
-
 class SetupPathsTest < Minitest::Test
   SCRIPT = File.join(ROOT, "lib/sh/setup-paths.sh")
 
@@ -231,5 +106,85 @@ class SetupPathsTest < Minitest::Test
     _output, status = setup_paths("services/api\nINJECTED=1", "etc/kamal/deploy-production.yml")
     refute status.success?
     assert_empty @gh.exported
+  end
+end
+
+# script/check-remote-pin, run from a copy inside a scratch repository.
+class CheckRemotePinTest < Minitest::Test
+  GIT_ENV = { "GIT_AUTHOR_NAME" => "t", "GIT_AUTHOR_EMAIL" => "t@example.com", "GIT_COMMITTER_NAME" => "t",
+              "GIT_COMMITTER_EMAIL" => "t@example.com", "GIT_CONFIG_GLOBAL" => "/dev/null", "GIT_CONFIG_NOSYSTEM" => "1" }.freeze
+
+  def setup
+    @repo = File.join(tmpdir, "repo")
+    write("script/check-remote-pin", File.read(File.join(ROOT, "script/check-remote-pin")))
+    write("deploy/action.yml", "name: deploy\n")
+    write("lib/ci_deploy/x.rb", "# v1\n")
+    write("Gemfile.lock", "kamal (2.10.0)\n")
+    git("init", "-q")
+    @code = commit("action code")
+  end
+
+  def write(path, content)
+    FileUtils.mkdir_p(File.dirname(File.join(@repo, path)))
+    File.write(File.join(@repo, path), content)
+  end
+
+  def git(*args)
+    output, status = Open3.capture2e(clean_env(GIT_ENV), "git", *args, chdir: @repo, **spawn_options)
+    assert status.success?, output
+    output
+  end
+
+  def commit(message)
+    git("add", "-A")
+    git("commit", "-q", "-m", message)
+    git("rev-parse", "HEAD").strip
+  end
+
+  def pin_workflow(*shas)
+    write(".github/workflows/remote-consumer.yml",
+          shas.map { |sha| "      - uses: marcortola/ci-deploy/deploy@#{sha} # pin\n" }.join)
+    commit("pin")
+  end
+
+  def check
+    Open3.capture2e(clean_env(GIT_ENV), "sh", File.join(@repo, "script/check-remote-pin"), **spawn_options)
+  end
+
+  def test_a_pin_with_the_same_action_code_passes
+    pin_workflow(@code)
+    write("docs/notes.md", "docs only\n")
+    commit("docs")
+    output, status = check
+    assert status.success?, output
+    assert_includes output, "pins #{@code}"
+  end
+
+  def test_changed_action_code_after_the_pin_fails
+    pin_workflow(@code)
+    { "lib/ci_deploy/x.rb" => "# v2\n", "Gemfile.lock" => "kamal (2.10.1)\n", "deploy/action.yml" => "name: changed\n" }.each do |path, content|
+      write(path, content)
+      commit(path)
+      output, status = check
+      refute status.success?, path
+      assert_includes output, "differs from the pinned #{@code}"
+      assert_includes output, path
+    end
+  end
+
+  def test_several_pins_a_short_pin_or_an_unknown_commit_fail
+    [[@code, "f" * 40], [@code[0, 7]], ["e" * 40]].each do |shas|
+      pin_workflow(*shas)
+      _output, status = check
+      refute status.success?, shas.inspect
+    end
+  end
+
+  def test_a_mixed_case_reference_is_read_too
+    write(".github/workflows/remote-consumer.yml", "      - uses: MarcOrtola/CI-Deploy/deploy@#{'f' * 40}\n      - uses: marcortola/ci-deploy/setup@#{@code}\n")
+    commit("pins")
+    output, status = check
+    refute status.success?
+    assert_includes output, "several revisions"
   end
 end

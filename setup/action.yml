@@ -1,18 +1,18 @@
 name: ci-deploy setup
 description: >-
-  Checks out the component, prepares Ruby and the locked Kamal bundle from this repository, loads
-  the SSH key, exports variables, secrets and Terraform outputs, and copies the Kamal secrets file.
-  Run it before the deploy or operations action, pinned to the same SHA.
+  Checks out the component at the workflow's commit, prepares Ruby and the locked Kamal bundle from
+  this repository, loads the SSH key, exports variables, secrets and Terraform outputs, and copies
+  the Kamal secrets file. Run it before the deploy or operations action, pinned to the same SHA.
+  For the rest of the job it sets up Ruby 3.3, puts this revision's bin/ first on PATH and exports
+  BUNDLE_GEMFILE (this revision's Gemfile), RUBYLIB (its lib/), CI_DEPLOY_HOME,
+  CI_DEPLOY_HOOKS_LIB, CI_DEPLOY_PROJECT_DIR and CI_DEPLOY_CONFIG: later steps that run Ruby or
+  Bundler for the component's own purposes must set their own BUNDLE_GEMFILE.
 
 inputs:
   checkout:
     description: "Check out the repository first ('true' or 'false')."
     required: false
     default: "true"
-  ref:
-    description: Ref to check out; empty uses the event's ref.
-    required: false
-    default: ""
   project-directory:
     description: Directory holding the Kamal configuration, relative to the workspace. Kamal runs here.
     required: false
@@ -91,7 +91,6 @@ runs:
       if: inputs.checkout == 'true'
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
-        ref: ${{ inputs.ref }}
         persist-credentials: false
 
     - name: Point the job at this revision's tooling

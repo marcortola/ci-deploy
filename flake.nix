@@ -1,5 +1,5 @@
 {
-  description = "Shared Kamal deploy actions, operations and local launcher";
+  description = "Shared Kamal deploy actions and operations";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 

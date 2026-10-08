@@ -3,16 +3,12 @@
 require "securerandom"
 
 module CiDeploy
-  # Writes to the files GitHub Actions reads between steps. Outside Actions (the local launcher,
-  # tests without the variables) the writes go nowhere and values stay in this process only.
+  # Writes to the files GitHub Actions reads between steps. Outside Actions (tests without the
+  # variables) the writes go nowhere and values stay in this process only.
   class Github
     def initialize(env: ENV, out: $stdout)
       @env = env
       @out = out
-    end
-
-    def actions?
-      !@env.fetch("GITHUB_ENV", "").empty?
     end
 
     # Exports to later steps and to this process. Multiline values use the delimiter form, with a
@@ -26,15 +22,12 @@ module CiDeploy
       append("GITHUB_OUTPUT", entry(name, value.to_s))
     end
 
-    def add_path(directory)
-      @env["PATH"] = [directory, @env["PATH"]].compact.join(File::PATH_SEPARATOR)
-      append("GITHUB_PATH", "#{directory}\n")
-    end
-
     # Each line of a multiline secret is masked on its own, because the runner masks per line.
+    # The value is escaped as workflow-command data, so a `%` or a lone carriage return reaches
+    # the runner as the character itself, never as an escape or the end of the command.
     def mask(value)
       value.to_s.each_line(chomp: true) do |line|
-        @out.puts "::add-mask::#{line}" unless line.strip.empty?
+        @out.puts "::add-mask::#{escape_data(line)}" unless line.strip.empty?
       end
     end
 
@@ -43,6 +36,8 @@ module CiDeploy
     def error(message) = @out.puts("::error::#{message}")
 
     private
+
+    def escape_data(text) = text.gsub("%", "%25").gsub("\r", "%0D").gsub("\n", "%0A")
 
     def entry(name, value)
       unless name.match?(/\A[A-Za-z_][A-Za-z0-9_-]*\z/)

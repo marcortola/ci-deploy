@@ -1,0 +1,16 @@
+# Synthetic consumer for the remote revision-check job: pinned to the same commit as
+# .github/workflows/remote-consumer.yml, and re-pinned with it (docs/releasing.md).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: marcortola/ci-deploy/setup@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+      - uses: marcortola/ci-deploy/deploy@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        with:
+          rollback: auto

@@ -12,7 +12,7 @@ class ActionsTest < Minitest::Test
   def step(name, id_or_name) = steps(name).find { |s| s["id"] == id_or_name || s["name"] == id_or_name }
 
   def test_the_expected_actions_exist_and_are_composite
-    assert_equal %w[container dependabot-merge deploy node operations php revision-check setup terraform], ACTIONS.keys
+    assert_equal %w[dependabot-merge deploy operations revision-check setup], ACTIONS.keys
     ACTIONS.each { |name, action| assert_equal "composite", action.dig("runs", "using"), name }
   end
 
@@ -45,7 +45,7 @@ class ActionsTest < Minitest::Test
         s["run"].scan(%r{"\$GITHUB_ACTION_PATH/\.\./([^"]+)"}).flatten.each do |path|
           assert File.file?(File.join(ROOT, path)), "#{name} runs #{path}, which does not exist"
         end
-        assert_match(/\$GITHUB_ACTION_PATH|\A\s*(cd|ruby) /, s["run"], "#{name}/#{s['name']} runs something outside this revision") unless %w[node php].include?(name)
+        assert_match(/\$GITHUB_ACTION_PATH|\A\s*(cd|ruby) /, s["run"], "#{name}/#{s['name']} runs something outside this revision")
       end
     end
   end
@@ -79,7 +79,8 @@ class ActionsTest < Minitest::Test
 
   def test_defaults_that_must_stay_safe
     deploy = ACTIONS["deploy"]["inputs"]
-    assert_equal "off", deploy.dig("rollback", "default")
+    assert_equal true, deploy.dig("rollback", "required")
+    refute deploy["rollback"].key?("default"), "rollback must be chosen by every consumer"
     assert_equal "false", deploy.dig("skip-hooks", "default")
     assert_equal "enforce", deploy.dig("branch-policy", "default")
     assert_equal "", ACTIONS.dig("operations", "inputs", "container-mode", "default")

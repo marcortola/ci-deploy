@@ -29,13 +29,16 @@ updates:
       - dependency-name: "marcortola/ci-deploy*"
 ```
 
-After Dependabot bumps the pins, the vendored launcher may differ from the new revision's: the
-revision check then fails and names it. Copy `launcher/ci-deploy-local` from the new SHA into the
-same pull request.
-
 ## In this repository
 
 `.github/dependabot.yml` lists every action directory (`/setup`, `/deploy`, ...) and `/` for the
 workflows, because an `action.yml` in an unlisted directory would keep its pins forever.
-`test/unit/actions_test.rb` fails when an action directory is missing from the list. Bundler
-updates (Kamal and its dependencies) are grouped weekly.
+`test/unit/actions_test.rb` fails when an action directory is missing from the list. The
+entry ignores `marcortola/ci-deploy*`: the remote-consumption workflow pins this repository's own
+action-code commit, which only the release procedure moves.
+
+Bundler updates are grouped weekly, except Kamal minor and major versions, which Dependabot
+ignores: a Kamal minor can raise `Kamal::Configuration::Proxy::Run::MINIMUM_VERSION`, the oldest
+kamal-proxy it deploys behind, and so needs the [proxy procedure](proxy.md) on every host before
+consumers move. Kamal patch versions still arrive through Dependabot. A Kamal minor or major
+upgrade is done by hand as a release (see [releasing](releasing.md)).

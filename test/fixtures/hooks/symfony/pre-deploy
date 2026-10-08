@@ -3,7 +3,7 @@
 # incoming image. The commands, their order and what a failure means stay in the consumer.
 set -eu
 # shellcheck source=lib/sh/hooks.sh
-. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action or launcher}/hooks.sh"
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
 
 if ci_deploy_is_rollback; then
     echo "Rollback detected; schema and broker stay as they are."

@@ -38,7 +38,7 @@ class ReconcileTest < Minitest::Test
   def test_reads_kamal_symbol_keys_and_reconciles_every_host
     output, status = reconcile
     assert status.success?, output
-    assert_equal [["config", "-c", "./etc/kamal/deploy.yml", "-d", "production"]], @stubs.calls_to("kamal")
+    assert_equal [["config", "-c", "./etc/kamal/deploy.yml", "-d", "production", "--version", "incoming-v2"]], @stubs.calls_to("kamal")
     ssh = @stubs.calls_to("ssh")
     assert_equal ["deploy@192.0.2.10", "deploy@192.0.2.11"], ssh.map { |call| call[-2] }
     assert_equal "sh -s 'example-app' 'production' 'web worker_1 '", ssh.first.last
@@ -55,8 +55,13 @@ class ReconcileTest < Minitest::Test
   def test_configuration_selector_and_defaults
     reconcile("-c", "./etc/kamal/deploy-production.yml")
     reconcile(env: { "CI_DEPLOY_HOOK_CONFIG" => "./svc/deploy.yml", "KAMAL_DESTINATION" => nil })
-    assert_equal [["config", "-c", "./etc/kamal/deploy-production.yml"], ["config", "-c", "./svc/deploy.yml"]], @stubs.calls_to("kamal")
+    assert_equal [["config", "-c", "./etc/kamal/deploy-production.yml", "--version", "incoming-v2"],
+                  ["config", "-c", "./svc/deploy.yml", "--version", "incoming-v2"]], @stubs.calls_to("kamal")
     assert_equal "sh -s 'example-app' '' 'web worker_1 '", @stubs.calls_to("ssh").last.last
+
+    # A version the caller passes is kept, not doubled.
+    reconcile("-c", "./etc/kamal/deploy.yml", "--version=incoming-v2")
+    assert_equal ["config", "-c", "./etc/kamal/deploy.yml", "--version=incoming-v2"], @stubs.calls_to("kamal").last
   end
 
   def test_fail_safe_skips

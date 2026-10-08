@@ -1,8 +1,9 @@
 name: ci-deploy revision-check
 description: >-
-  Fails unless the component references marcortola/ci-deploy only from top-level workflows, all
-  pinned to one full commit SHA with agreeing release comments, the vendored local launcher (when
-  given) is identical to the one at that SHA, and this check itself runs at that SHA.
+  Fails unless the component references marcortola/ci-deploy (owner and name in any case) only
+  from top-level workflows, all pinned to one full commit SHA with agreeing release comments, and
+  this check itself runs at that SHA. Every file git knows about in the component (tracked, or
+  untracked and not ignored) is scanned, so the component must be a git checkout.
 
 inputs:
   component:
@@ -13,10 +14,6 @@ inputs:
     description: Workflows directory, relative to the component.
     required: false
     default: .github/workflows
-  launcher:
-    description: Vendored local launcher, relative to the component; empty skips the comparison.
-    required: false
-    default: ""
   own-ref:
     description: >-
       Revision this check must match. Empty derives it from where the runner fetched this action
@@ -48,7 +45,6 @@ runs:
       env:
         CI_DEPLOY_IN_COMPONENT: ${{ inputs.component }}
         CI_DEPLOY_IN_WORKFLOWS: ${{ inputs.workflows }}
-        CI_DEPLOY_IN_LAUNCHER: ${{ inputs.launcher }}
         CI_DEPLOY_IN_OWN_REF: ${{ inputs.own-ref }}
         CI_DEPLOY_ACTION_HOME: ${{ github.action_path }}/..
       run: |

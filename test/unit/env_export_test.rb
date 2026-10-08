@@ -43,6 +43,24 @@ class EnvExportTest < Minitest::Test
     assert_equal({ "OK" => "1" }, @gh.exported)
   end
 
+  def test_reserved_names_are_refused_in_any_case
+    names = %w[github_token Github_Token path Bundle_Gemfile ci_deploy_home ld_preload
+               SSH_AUTH_SOCK ssh_auth_sock NODE_OPTIONS DOCKER_HOST DOCKER_CONFIG docker_config GIT_SSH_COMMAND git_dir GIT_CONFIG_GLOBAL]
+    result = export(vars: JSON.generate(names.to_h { |name| [name, "x"] }.merge("GITLAB_URL" => "ok", "SSH_USER" => "deploy")))
+    assert_equal %w[GITLAB_URL SSH_USER], result.exported
+    assert_equal names, result.skipped
+    assert_equal({ "GITLAB_URL" => "ok", "SSH_USER" => "deploy" }, @gh.exported)
+  end
+
+  def test_the_automatic_github_token_secret_is_skipped_silently
+    result = export(secrets: JSON.generate("github_token" => "ghs_example", "APP_KEY" => "k"))
+    assert_equal ["APP_KEY"], result.exported
+    assert_equal ["github_token"], result.skipped
+    refute_includes @gh.log, "github_token"
+    refute_includes @gh.log, "ghs_example"
+    refute @gh.exported.key?("github_token")
+  end
+
   def test_invalid_json_fails_without_echoing_the_content
     error = assert_raises(ArgumentError) { export(secrets: '{"API_KEY": "super-secret-value"') }
     refute_includes error.message, "super-secret-value"

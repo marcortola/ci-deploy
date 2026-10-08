@@ -1,19 +1,22 @@
 # frozen_string_literal: true
 
+require "open3"
+
 module CiDeploy
   # Checks that a component consumes this repository at exactly one revision.
   #
-  # - Every reference lives in a top-level workflow (.github/workflows/*.yml or *.yaml). A local
-  #   action under .github/workflows/shared/ (or anywhere else) that referenced this repository would
-  #   be a second pin that Dependabot's workflow-directory entry never updates.
+  # - Every reference lives in a top-level workflow (.github/workflows/*.yml or *.yaml). Every file
+  #   git knows about (tracked, or untracked and not ignored) is scanned: a local action under
+  #   .github/workflows/shared/, or a script anywhere else, that referenced this repository would be
+  #   a second pin that Dependabot's workflow-directory entry never updates. GitHub matches owner
+  #   and repository names case-insensitively, so this check does too.
   # - Every reference is pinned to a full 40-character commit SHA, and all of them to the same one,
-  #   so setup, deploy, operations, their helpers and the local launcher run the same code.
+  #   so setup, deploy, operations and their helpers run the same code.
   # - Release comments on those references, when present, agree with each other.
-  # - The vendored local launcher, when present, is identical to the one at that revision.
   # - When the check runs as an action, it runs at that same revision.
   class RevisionCheck
     REPOSITORY = "marcortola/ci-deploy"
-    REFERENCE = %r{#{Regexp.escape(REPOSITORY)}(?<path>/[A-Za-z0-9_./-]*)?@(?<ref>[^\s'"#]+)(?<rest>[^\n]*)}
+    REFERENCE = %r{#{Regexp.escape(REPOSITORY)}(?<path>/[A-Za-z0-9_./-]*)?@(?<ref>[^\s'"#]+)(?<rest>[^\n]*)}i
     SHA = /\A[0-9a-f]{40}\z/
 
     Reference = Struct.new(:file, :line, :ref, :comment, keyword_init: true)
@@ -24,15 +27,12 @@ module CiDeploy
     # The ref the runner fetched an action at: it stores remote actions under
     # _actions/<owner>/<repo>/<ref>/. A local checkout (uses: ./...) has none.
     def self.ref_from_action_path(path)
-      path.to_s[%r{/_actions/#{Regexp.escape(REPOSITORY)}/([^/]+)(?:/|\z)}, 1].to_s
+      path.to_s[%r{/_actions/#{Regexp.escape(REPOSITORY)}/([^/]+)(?:/|\z)}i, 1].to_s
     end
 
-    def initialize(component:, workflows: ".github/workflows", launcher: nil, launcher_template: nil, own_ref: nil)
+    def initialize(component:, workflows: ".github/workflows", own_ref: nil)
       @component = File.expand_path(component)
       @workflows = File.expand_path(workflows, @component)
-      @github_dir = File.join(@component, ".github")
-      @launcher = launcher.to_s.empty? ? nil : File.expand_path(launcher, @component)
-      @launcher_template = launcher_template
       @own_ref = own_ref.to_s
     end
 
@@ -44,8 +44,10 @@ module CiDeploy
       top_level = Dir.glob(File.join(@workflows, "*.{yml,yaml}")).sort
       top_level.each { |file| references.concat(scan(file)) }
 
-      others = Dir.glob(File.join(@github_dir, "**", "*"), File::FNM_DOTMATCH).select { |path| File.file?(path) }.sort - top_level
-      others.each do |file|
+      files = known_files
+      return Result.new(sha: nil, errors: ["#{@component} is not a git checkout, so its files cannot be listed"], references: []) unless files
+
+      (files - top_level).each do |file|
         scan(file).each do |reference|
           errors << "#{relative(file)}:#{reference.line} references #{REPOSITORY}; only top-level workflows in #{relative(@workflows)} may"
         end
@@ -76,7 +78,6 @@ module CiDeploy
         errors << "this check runs at #{@own_ref}, but the workflows pin #{sha}; pin the check to the same revision"
       end
 
-      check_launcher(errors)
       Result.new(sha: sha, errors: errors, references: references)
     end
 
@@ -94,14 +95,14 @@ module CiDeploy
       end
     end
 
-    def check_launcher(errors)
-      return unless @launcher
-      return errors << "the local launcher #{relative(@launcher)} does not exist" unless File.file?(@launcher)
-      return unless @launcher_template
+    # Tracked files plus untracked ones that are not ignored, as absolute paths; nil outside git.
+    def known_files
+      output, _errors, status = Open3.capture3("git", "-C", @component, "ls-files", "-z", "--cached", "--others", "--exclude-standard")
+      return nil unless status.success?
 
-      unless File.binread(@launcher) == File.binread(@launcher_template)
-        errors << "the local launcher #{relative(@launcher)} differs from the one at the pinned revision; copy launcher/ci-deploy-local from it"
-      end
+      output.split("\0").uniq.map { |path| File.join(@component, path) }.select { |path| File.file?(path) }.sort
+    rescue SystemCallError
+      nil
     end
 
     def relative(path)

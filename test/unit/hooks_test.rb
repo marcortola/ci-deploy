@@ -23,9 +23,10 @@ class HooksTest < Minitest::Test
     @stubs.add("ci-deploy-reconcile-removed-roles")
   end
 
+  # Kamal sets KAMAL_RUNTIME for the post-deploy hook only.
   def hook(stack, name, env = {})
     base = { "PATH" => @stubs.path, "CI_DEPLOY_HOOKS_LIB" => File.join(ROOT, "lib/sh"), "KAMAL_VERSION" => "incoming-v2",
-             "KAMAL_DESTINATION" => "production", "KAMAL_COMMAND" => "deploy" }
+             "KAMAL_DESTINATION" => "production", "KAMAL_COMMAND" => "deploy", "KAMAL_RUNTIME" => (name == "post-deploy" ? "42" : nil) }
     Open3.capture2e(clean_env(base.merge(env)), "sh", File.join(HOOKS, stack, name), chdir: @project, **spawn_options)
   end
 
@@ -127,6 +128,17 @@ class HooksTest < Minitest::Test
       assert_includes output, "choose the container explicitly"
     end
     assert_empty @stubs.calls
+  end
+
+  def test_live_container_is_refused_before_boot
+    output, status = run_helper("ci_deploy_node live-container 'npm run db:migrate'")
+    assert_equal 64, status.exitstatus
+    assert_includes output, "live-container runs in the post-deploy hook only"
+    assert_empty @stubs.calls
+
+    output, status = run_helper("ci_deploy_node live-container 'npm run db:migrate'", "KAMAL_RUNTIME" => "42")
+    assert status.success?, output
+    assert_includes @stubs.calls_to("kamal").first, "--reuse"
   end
 
   def test_the_incoming_version_is_required

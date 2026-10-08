@@ -7,10 +7,13 @@ module CiDeploy
   # Kamal's secrets files and ERB read them: as environment variables under their own names.
   #
   # Values go through the delimiter form of GITHUB_ENV, so multiline secrets such as private keys
-  # survive intact. Secrets are masked line by line. Names that would change how the runner, Ruby or
-  # this repository's own tooling behave are refused rather than exported.
+  # survive intact. Secrets are masked line by line. Names that would change how the runner, Ruby,
+  # SSH, Docker, Git, Node or this repository's own tooling behave are refused rather than
+  # exported, whatever their case: toJSON(secrets) carries `github_token` in lower case.
   class EnvExport
-    PROTECTED = /\A(PATH|HOME|SHELL|IFS|ENV|BASH_ENV|LD_[A-Z_]+|RUBY[A-Z_]*|GEM_[A-Z_]+|BUNDLE_[A-Z_]+|CI_DEPLOY_[A-Z0-9_]*|GITHUB_[A-Z0-9_]*|RUNNER_[A-Z0-9_]*|ACTIONS_[A-Z0-9_]*)\z/
+    PROTECTED = /\A(PATH|HOME|SHELL|IFS|ENV|BASH_ENV|LD_[A-Z_]+|RUBY[A-Z_]*|GEM_[A-Z_]+|BUNDLE_[A-Z_]+|CI_DEPLOY_[A-Z0-9_]*|GITHUB_[A-Z0-9_]*|RUNNER_[A-Z0-9_]*|ACTIONS_[A-Z0-9_]*|SSH_AUTH_SOCK|NODE_OPTIONS|DOCKER_HOST|DOCKER_CONFIG|GIT_[A-Z0-9_]*)\z/i
+    # Present in every toJSON(secrets), so it is skipped without a warning.
+    AUTOMATIC = /\Agithub_token\z/i
     VALID_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 
     Result = Struct.new(:exported, :skipped, keyword_init: true)
@@ -26,6 +29,8 @@ module CiDeploy
         parse(json, kind).each do |name, value|
           if !name.match?(VALID_NAME) || name.match?(PROTECTED)
             skipped << name
+            next if kind == :secrets && name.match?(AUTOMATIC)
+
             @github.warning("Not exporting #{kind == :secrets ? 'secret' : 'variable'} #{name}: the name is reserved or invalid.")
             next
           end

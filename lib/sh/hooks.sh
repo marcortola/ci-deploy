@@ -2,10 +2,10 @@
 #
 # Shared helpers for Kamal deploy hooks. SOURCED, not executed:
 #
-#   . "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action or launcher}/hooks.sh"
+#   . "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
 #
-# The setup action and the local launcher export CI_DEPLOY_HOOKS_LIB, put this repository's bin/
-# first on PATH and export BUNDLE_GEMFILE, so `kamal` here is the locked version.
+# The setup action exports CI_DEPLOY_HOOKS_LIB, puts this repository's bin/ first on PATH and
+# exports BUNDLE_GEMFILE, so `kamal` here is the locked version.
 #
 # Which commands a hook runs, in which phase and order, and what a failure means stay in the
 # consumer's hooks. These helpers only run one command on the primary host, in a container chosen
@@ -14,8 +14,9 @@
 #   new-image       a disposable container from the image being deployed (KAMAL_VERSION). Use it
 #                   before boot - the live container still runs the old code - and for anything
 #                   that must not share the live container's state.
-#   live-container  the running container (--reuse). After boot it runs the new code; before boot
-#                   it runs the old one.
+#   live-container  the running container of KAMAL_VERSION (--reuse). Post-deploy only: before
+#                   boot no container of the incoming version runs, so the helper refuses it
+#                   unless KAMAL_RUNTIME is set, which Kamal sets only for the post-deploy hook.
 #
 # Symfony note: the live web container has no USER directive, so `bin/console` run there executes
 # as root; booting the prod kernel as root leaves var/cache/prod owned by root, after which php-fpm
@@ -33,7 +34,13 @@ ci_deploy_exec() {
     _ci_deploy_command=${2:-}
     case "$_ci_deploy_mode" in
         new-image) set -- ;;
-        live-container) set -- --reuse ;;
+        live-container)
+            if [ -z "${KAMAL_RUNTIME:-}" ]; then
+                echo "ci-deploy hooks: live-container runs in the post-deploy hook only; before boot no container of ${KAMAL_VERSION:-the incoming version} runs, so use new-image" >&2
+                return 64
+            fi
+            set -- --reuse
+            ;;
         *)
             echo "ci-deploy hooks: choose the container explicitly: new-image or live-container (got '${_ci_deploy_mode}')" >&2
             return 64

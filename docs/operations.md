@@ -45,8 +45,12 @@ Guards:
 
 - **Container mode is never defaulted** for `app-exec` and `console` (see [hooks](hooks.md)).
 - **The proxy is never restarted or rebooted implicitly.** `proxy-restart` and `proxy-reboot` need
-  `hosts`; so does `proxy reboot|restart|upgrade` through `kamal` free arguments. A proxy reboot
+  `hosts`. Through `kamal` free arguments, `proxy reboot|restart|upgrade|stop|remove` and the
+  top-level `remove` and `upgrade` need `--hosts`/`-h` with at least one host. A proxy reboot
   interrupts every application on the host; follow [the proxy procedure](proxy.md).
+- **An empty filter is refused.** `--hosts=,`, `--hosts ""`, `-h ""`, `--roles=` and the like would
+  select every host or role, so they are rejected, in free arguments and in the `hosts` and
+  `roles` inputs alike.
 - **Free arguments are split like shell words** (quotes group) and passed as a vector: `;`, `|`,
   `$()` and backticks reach Kamal as plain characters. A command that Kamal runs inside a
   container (`app exec`, `server exec`) is still interpreted by the shell there, as Kamal always

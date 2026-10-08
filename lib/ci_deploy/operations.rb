@@ -22,8 +22,11 @@ module CiDeploy
       if reserved
         raise Invalid, "#{reserved} is set by the action's configuration and destination inputs, not by the free arguments"
       end
-      if proxy_restart?(argv) && argv.none? { |arg| arg.match?(/\A(-h|--hosts)(=.+)?\z/) || arg.match?(/\A-h.+\z/) }
-        raise Invalid, "restarting or rebooting the proxy needs an explicit target: add --hosts"
+      filters = filter_values(argv)
+      empty = filters.find { |_option, value| value.split(",").all? { |item| item.strip.empty? } }
+      raise Invalid, "#{empty.first} needs at least one value: an empty filter would select every host" if empty
+      if targeted?(argv) && filters.none? { |option, _value| option == "--hosts" }
+        raise Invalid, "this command stops, replaces or removes the proxy or the application on every host it reaches: add --hosts with an explicit target"
       end
 
       argv
@@ -33,9 +36,35 @@ module CiDeploy
       raise Invalid, "the Kamal arguments cannot be split: #{e.message}"
     end
 
-    def proxy_restart?(argv)
+    # Commands that interrupt every application behind a host's proxy, or remove an application:
+    # `proxy reboot|restart|upgrade|stop|remove`, and `remove` and `upgrade` themselves. Options may
+    # come before the subcommand, so any non-option word counts; a false match only asks for --hosts.
+    TARGETED_PROXY = %w[reboot restart upgrade stop remove].freeze
+    TARGETED_TOP = %w[remove upgrade].freeze
+
+    def targeted?(argv)
       words = argv.reject { |arg| arg.start_with?("-") }
-      words[0] == "proxy" && %w[reboot restart upgrade].include?(words[1])
+      proxy = words.index("proxy")
+      return true if proxy && words.drop(proxy + 1).any? { |word| TARGETED_PROXY.include?(word) }
+
+      words.any? { |word| TARGETED_TOP.include?(word) }
+    end
+
+    # Every --hosts/-h and --roles/-r filter as [canonical option, value], in the forms Kamal's
+    # option parser accepts: `--hosts=a,b`, `--hosts a,b`, `-ha,b`, `-h a,b`.
+    def filter_values(argv)
+      names = { "--hosts" => "--hosts", "-h" => "--hosts", "--roles" => "--roles", "-r" => "--roles" }
+      filters = []
+      argv.each_with_index do |arg, index|
+        if names.key?(arg)
+          filters << [names[arg], argv[index + 1].to_s]
+        elsif (match = arg.match(/\A(--hosts|--roles)=(.*)\z/m))
+          filters << [match[1], match[2]]
+        elsif (match = arg.match(/\A-([hr])(.+)\z/m))
+          filters << [names["-#{match[1]}"], match[2].delete_prefix("=")]
+        end
+      end
+      filters
     end
   end
 

@@ -1,7 +1,7 @@
 #!/bin/sh
-# Runs the Kamal locked in this repository's Gemfile.lock. The setup action and the local launcher
-# put this directory first on PATH and export BUNDLE_GEMFILE, so Kamal hooks that call `kamal`
-# reach the same version as the step that started them.
+# Runs the Kamal locked in this repository's Gemfile.lock. The setup action puts this directory
+# first on PATH and exports BUNDLE_GEMFILE, so Kamal hooks that call `kamal` reach the same version
+# as the step that started them.
 set -eu
-: "${BUNDLE_GEMFILE:?kamal: BUNDLE_GEMFILE is not set; run the setup action or the local launcher}"
+: "${BUNDLE_GEMFILE:?kamal: BUNDLE_GEMFILE is not set; run the setup action first}"
 exec bundle exec kamal "$@"

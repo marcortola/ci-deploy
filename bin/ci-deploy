@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Entry point for the actions' steps and the local launcher. See lib/ci_deploy/cli.rb.
+# Entry point for the actions' steps. See lib/ci_deploy/cli.rb.
 $LOAD_PATH.unshift File.expand_path("../lib", __dir__)
 require "ci_deploy/cli"
 

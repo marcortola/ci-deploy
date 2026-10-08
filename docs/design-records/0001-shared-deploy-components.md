@@ -1,7 +1,7 @@
 # 0001 Shared deploy components
 
-Status: Accepted, 2026-10-08. Implementation: phase 1 (this repository); consumers not yet
-migrated.
+Status: Accepted, 2026-10-08; amended 2026-10-08 (scope cut, see [Amendment](#amendment-2026-10-08-scope-cut)).
+Implementation: phase 1 (this repository); consumers not yet migrated.
 
 ## Context
 
@@ -14,20 +14,22 @@ Fixes landed in one copy and not in the others.
 ## Decision
 
 1. **One public repository of independent composite actions** (`setup`, `deploy`, `operations`,
-   plus CI helpers for Node, PHP, Terraform, containers, Dependabot and a revision check). Each
+   plus CI helpers for Node, PHP, Terraform, containers, Dependabot and a revision check;
+   the Node, PHP, Terraform and container helpers are deferred by the amendment). Each
    resolves its own scripts through `github.action_path`, never through the consumer's checkout,
    so the code that runs is the code at the pinned SHA.
 2. **Pinned by full commit SHA** in consumers, with the release as a comment, updated by one
    grouped weekly Dependabot pull request. References are allowed only in top-level
    `.github/workflows/*.yml`: Dependabot does not see deeper files and a reference elsewhere
-   could pin a second revision. The revision check enforces a single revision, the location rule
-   and the vendored launcher's identity.
-3. **Ruby 3.3 and Kamal 2.10.0 locked** by `Gemfile.lock`; the local launcher installs the same
-   bundle per revision in a cache, never globally.
+   could pin a second revision. The revision check enforces a single revision and the location
+   rule (the launcher comparison was removed by the amendment).
+3. **Ruby 3.3 and Kamal 2.10.0 locked** by `Gemfile.lock`. (The local launcher that installed the
+   same bundle on a workstation was removed by the amendment.)
 4. **Deploy invariants live in one place** (`lib/ci_deploy/deploy.rb`): one explicit version for
    build and deploy; a failed build or missing prebuilt image changes no host; metadata,
    notifications and rollback are centralised; cleanup and notification run after failures and
-   the original result is preserved; rollback policy is explicit (`auto` or `off`, default `off`).
+   the original result is preserved; rollback policy is explicit (`auto` or `off`; required with
+   no default since the amendment).
 5. **Hook order and commands stay local.** The shared part is the mechanism (role
    reconciliation, executors for new image or live container with an explicit choice,
    parametrised host control), not the per-component sequence.
@@ -65,3 +67,25 @@ integration suite (`script/integration`), which deploys to disposable Docker-in-
 SSH, including two applications sharing one proxy upgraded from v0.8.1 to v0.9.0. Neither
 exercises a real registry with authentication, Terraform Cloud, or real notification endpoints;
 those paths are covered by unit tests with stubs only.
+
+## Amendment 2026-10-08: scope cut
+
+Approved by the user during the review of the phase 1 pull request.
+
+- **No CI toolchain actions.** The `node`, `php`, `terraform` and `container` actions are deferred
+  to phase 5 and removed from this repository with their scripts, tests and Dependabot entries.
+  Each wrapped a few lines of a component's own CI around a third-party action; moving those
+  lines behind a pinned shared action added a level of indirection and a release step for every
+  change, for little gain over keeping them in the component. `dependabot-merge` and
+  `revision-check` stay.
+- **No local launcher.** `launcher/ci-deploy-local`, its Ruby code (`CiDeploy::Local`), tests,
+  integration scenario, documentation and the revision check's `launcher` input are removed. The
+  user never deploys from a workstation, so the launcher was code to maintain and keep identical
+  in every component without a caller. Deploys and operations run only through the actions.
+- **Rollback has no default.** `rollback` is required, so a component that relies on automatic
+  rollback cannot lose it by omitting the input during migration.
+
+Consequences: the revision check no longer compares a vendored file; a component adopts the
+setup, deploy and operations actions, the hook helpers, `dependabot-merge` and the revision
+check, and keeps its own toolchain steps. Reintroducing the deferred actions is a new decision
+with its own record.

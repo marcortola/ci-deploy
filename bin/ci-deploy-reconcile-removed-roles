@@ -38,6 +38,15 @@ if [ "$#" -eq 0 ]; then
     fi
 fi
 
+# The service name is read as <service>-<KAMAL_VERSION>, so Kamal must render that very version:
+# left to itself it derives one from git (another SHA, an _uncommitted_ suffix), the suffix check
+# below fails and the reconcile skips every time a deploy used an explicit or prebuilt version.
+_has_version=false
+for _arg in "$@"; do
+    case "$_arg" in --version|--version=*) _has_version=true ;; esac
+done
+[ "$_has_version" = true ] || set -- "$@" --version "$KAMAL_VERSION"
+
 # Roles / hosts / service, straight from the rendered (and merged) config. Kamal prints its keys as
 # Ruby symbols (`:roles:`); the plain form is accepted too.
 _cfg=$(kamal config "$@" 2>/dev/null) \

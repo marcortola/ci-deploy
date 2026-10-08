@@ -7,7 +7,7 @@ provides the helpers that run one command on the primary host.
 ```sh
 #!/bin/sh
 set -eu
-. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action or launcher}/hooks.sh"
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
 
 if ci_deploy_is_rollback; then
     exit 0
@@ -18,7 +18,7 @@ ci_deploy_symfony new-image "app:messaging:setup"
 ```
 
 `CI_DEPLOY_HOOKS_LIB`, `PATH` (this revision's `bin/` first) and `BUNDLE_GEMFILE` are set by the
-setup action and by the local launcher, so a hook that calls `kamal` runs the locked Kamal with
+setup action, so a hook that calls `kamal` runs the locked Kamal with
 the same bundle as the deploy that started it.
 
 ## Choosing the container
@@ -28,7 +28,7 @@ Every call names the container explicitly; there is no default.
 | Mode | Runs in | Use it |
 | --- | --- | --- |
 | `new-image` | a disposable container from the image being deployed (`--version $KAMAL_VERSION`) | before boot, when the live container still runs the old code; for anything that must not share the live container's state |
-| `live-container` | the running container (`--reuse`) | after boot, when the live container runs the new code; before boot it still runs the old one |
+| `live-container` | the running container of the incoming version (`--reuse --version $KAMAL_VERSION`) | in the post-deploy hook only, once that container runs; before boot no such container exists, so the helper refuses it unless `KAMAL_RUNTIME` is set, which Kamal sets for post-deploy only |
 
 Symfony: the live web container usually has no `USER`, so `bin/console` there runs as root and
 can leave `var/cache/prod` owned by root, after which php-fpm fails every request. Use

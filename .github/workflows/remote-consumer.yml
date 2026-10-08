@@ -2,7 +2,8 @@ name: Remote consumption
 
 # Runs the published actions the way a consumer does: fetched from GitHub by full commit SHA, not
 # from this checkout. The pin is the newest commit that changed an action or its scripts; bump it
-# in the same pull request whenever one does (the release procedure in docs/releasing.md).
+# in the same pull request whenever one does, together with test/fixtures/revision-consumer (the
+# release procedure in docs/releasing.md). CI's script/check-remote-pin fails while it is stale.
 # Kamal is replaced by test/remote/kamal, which records its calls, so the scenarios check the
 # action wiring: one version, outputs, rollback, cleanup and reporting after a failure, and the
 # re-raised result.
@@ -131,6 +132,8 @@ jobs:
         with:
           persist-credentials: false
 
+      # This repository's own docs and tests reference it, so the check runs on a synthetic
+      # consumer pinned to the same commit.
       - uses: marcortola/ci-deploy/revision-check@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
         with:
-          launcher: launcher/ci-deploy-local
+          component: test/fixtures/revision-consumer

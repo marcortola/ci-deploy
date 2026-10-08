@@ -13,7 +13,7 @@
 #   3. reboots the proxy to v0.9.0 through the operations catalog, checking both apps before and after;
 #   4. deploys through bin/ci-deploy: a prebuilt image, a Kamal build, a failed build (no host
 #      touched), a failed health check rolled back, with the hooks reaching the same kamal;
-#   5. runs commands, boots and reboots a persistent accessory, and deploys through the local launcher.
+#   5. runs commands, and boots and reboots a persistent accessory.
 #
 # Everything it starts is named cid-it-* and removed on exit; CI_DEPLOY_IT_KEEP=1 keeps it running.
 set -euo pipefail
@@ -121,7 +121,7 @@ ci() {
     local output="$WORK/github-output"
     : > "$output"
     local status=0
-    env "$@" GITHUB_OUTPUT="$output" GITHUB_REF_NAME=main GITHUB_SHA=0000000000000000000000000000000000000000 \
+    env "$@" GITHUB_OUTPUT="$output" GITHUB_REF_NAME=main GITHUB_SHA="$(git -C "$WORK/$app" rev-parse HEAD)" \
         CI_DEPLOY_HOME="$ROOT" CI_DEPLOY_ACTION_HOME="$ROOT" CI_DEPLOY_HOOKS_LIB="$ROOT/lib/sh" \
         CI_DEPLOY_PROJECT_DIR="$WORK/$app" CI_DEPLOY_CONFIG=etc/kamal/deploy.yml \
         BUNDLE_GEMFILE="$ROOT/Gemfile" RUBYLIB="$ROOT/lib" PATH="$ROOT/bin:$PATH" IT_HOOK_LOG="$WORK/hook.log" \
@@ -130,7 +130,7 @@ ci() {
 }
 
 step "Pre-check: Kamal 2.10 refuses to deploy behind the old proxy and changes nothing"
-status=0; ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v2 || status=$?
+status=0; ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v2 CI_DEPLOY_IN_ROLLBACK=off || status=$?
 [ "$status" -ne 0 ] || fail "a deploy behind kamal-proxy v0.8.1 succeeded"
 expect_match "$(cat "$WORK/last.log")" "too old" "Kamal 2.10 names the old proxy"
 expect_eq "$(answer 127.0.0.2 a)" "app-a v1" "app A still serves v1"
@@ -155,7 +155,7 @@ expect_eq "$(answer 127.0.0.3 a)" "app-a v1" "app A answers after the reboot on 
 
 step "Deploy a prebuilt image with hooks"
 : > "$WORK/hook.log"
-ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v2 || { cat "$WORK/last.log"; fail "prebuilt deploy failed"; }
+ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v2 CI_DEPLOY_IN_ROLLBACK=off || { cat "$WORK/last.log"; fail "prebuilt deploy failed"; }
 expect_eq "$(out deploy-result)" success "deploy-result"
 expect_eq "$(out previous-version)" v1 "previous-version"
 expect_eq "$(answer 127.0.0.2 a)" "app-a v2" "app A answers v2 on the shared server"
@@ -169,13 +169,13 @@ expect_match "$hook" "version=v2" "the hook sees the incoming version"
 expect_match "$hook" "^ok$" "the hook ran a command from the incoming image"
 
 step "A prebuilt image that is not published is refused before any host is touched"
-status=0; ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v9-missing || status=$?
+status=0; ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v9-missing CI_DEPLOY_IN_ROLLBACK=off || status=$?
 [ "$status" -ne 0 ] || fail "deploying a missing image succeeded"
 expect_eq "$(out deploy-result)" image-missing "deploy-result"
 expect_eq "$(answer 127.0.0.2 a)" "app-a v2" "app A still serves v2"
 
 step "Build with Kamal and deploy the same version"
-ci app-b deploy CI_DEPLOY_IN_VERSION=v2-built || { cat "$WORK/last.log"; fail "built deploy failed"; }
+ci app-b deploy CI_DEPLOY_IN_VERSION=v2-built CI_DEPLOY_IN_ROLLBACK=off || { cat "$WORK/last.log"; fail "built deploy failed"; }
 expect_eq "$(out version)" v2-built "version"
 expect_match "$(cat "$WORK/last.log")" "kamal build push --version=v2-built" "built with the explicit version"
 expect_match "$(cat "$WORK/last.log")" "kamal deploy --skip-push --version=v2-built" "deployed the same version"
@@ -218,31 +218,3 @@ ci app-a operation CI_DEPLOY_IN_OPERATION=accessory-reboot CI_DEPLOY_IN_TARGET=s
 expect_eq "$(docker exec "$PREFIX-host1" cat /var/lib/it-store/marker)" "$marker" "the accessory's data survives the reboot"
 ci app-a operation CI_DEPLOY_IN_OPERATION=accessory-details CI_DEPLOY_IN_TARGET=store || fail "accessory details failed"
 expect_match "$(cat "$WORK/last.log")" "Up " "the accessory runs after the reboot"
-
-step "Deploy through the local launcher"
-mirror="$WORK/ci-deploy-mirror"
-mkdir -p "$mirror"
-(cd "$ROOT" && git ls-files -z --cached --others --exclude-standard | xargs -0 cp --parents -t "$mirror")
-git -C "$mirror" init -q
-git -C "$mirror" -c user.name=it -c user.email=it@example.com add -A
-git -C "$mirror" -c user.name=it -c user.email=it@example.com commit -q -m mirror
-sha=$(git -C "$mirror" rev-parse HEAD)
-mkdir -p "$WORK/app-a/.github/workflows" "$WORK/app-a/bin"
-printf 'jobs:\n  deploy:\n    steps:\n      - uses: marcortola/ci-deploy/setup@%s # test\n      - uses: marcortola/ci-deploy/deploy@%s # test\n' "$sha" "$sha" \
-    > "$WORK/app-a/.github/workflows/deploy.yml"
-cp "$ROOT/launcher/ci-deploy-local" "$WORK/app-a/bin/ci-deploy-local"
-printf 'APP_A_HOSTS=127.0.0.2,127.0.0.3\nIT_REGISTRY_PASSWORD=%s\n' "$IT_REGISTRY_PASSWORD" > "$WORK/local.env"
-: > "$WORK/hook.log"
-(cd "$WORK/app-a" && env -u BUNDLE_GEMFILE -u RUBYLIB -u CI_DEPLOY_HOOKS_LIB CI_DEPLOY_REPOSITORY_URL="$mirror" IT_HOOK_LOG="$WORK/hook.log" \
-    sh bin/ci-deploy-local --env-file "$WORK/local.env" --branch-policy off -- deploy --skip-push --version v1) > "$WORK/last.log" 2>&1 \
-    || { tail -40 "$WORK/last.log"; fail "launcher deploy failed"; }
-cache="$HOME/.cache/ci-deploy/$sha"
-expect_eq "$(answer 127.0.0.2 a)" "app-a v1" "the launcher deployed v1"
-expect_match "$(cat "$WORK/hook.log")" "^kamal=$cache/(bin|vendor/bundle/ruby/[^/]+/bin)/kamal$" "the launcher's hook reaches the cached revision's kamal"
-expect_match "$(cat "$WORK/hook.log")" "^kamal_version=2\.10\.0$" "the launcher's hook runs the locked Kamal"
-expect_match "$(cat "$WORK/hook.log")" "bundle=$cache/Gemfile" "the launcher's hook runs with the cached bundle"
-status=0
-(cd "$WORK/app-a" && CI_DEPLOY_REPOSITORY_URL="$mirror" sh bin/ci-deploy-local --env-file "$WORK/local.env" -- deploy --skip-push --version v9-missing) \
-    > "$WORK/last.log" 2>&1 || status=$?
-[ "$status" -ne 0 ] || fail "the launcher deployed an unpublished image"
-expect_match "$(cat "$WORK/last.log")" "is not published in the registry" "the launcher refuses an unpublished image"

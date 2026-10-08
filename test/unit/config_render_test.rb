@@ -4,7 +4,7 @@ require_relative "../test_helper"
 require "yaml"
 
 # Renders the synthetic consumer configuration with the locked Kamal, as the setup action and the
-# launcher run it: this repository's bin first on PATH, its lib on RUBYLIB, the secrets file
+# hooks run it: this repository's bin first on PATH, its lib on RUBYLIB, the secrets file
 # prepared, hosts in the forms Terraform outputs arrive in.
 class ConfigRenderTest < Minitest::Test
   def setup
@@ -86,5 +86,26 @@ class ConfigRenderTest < Minitest::Test
     # Kamal lists accessory hosts too; on those the remote side finds no container of this service.
     assert_equal ["deploy@192.0.2.10", "deploy@192.0.2.20", "deploy@192.0.2.30"], stubs.calls_to("ssh").map { |call| call[-2] }
     assert_equal "sh -s 'example-app' '' 'web worker '", stubs.calls_to("ssh").first.last
+  end
+
+  # As a post-deploy hook calls it: no arguments, in a git checkout whose HEAD is not the version
+  # being deployed (an explicit or prebuilt version). Kamal must render KAMAL_VERSION, or the
+  # service name does not end in it and the reconcile skips.
+  def test_reconcile_without_arguments_renders_the_deployed_version_not_head
+    git_env = { "GIT_AUTHOR_NAME" => "t", "GIT_AUTHOR_EMAIL" => "t@example.com", "GIT_COMMITTER_NAME" => "t",
+                "GIT_COMMITTER_EMAIL" => "t@example.com", "GIT_CONFIG_GLOBAL" => "/dev/null", "GIT_CONFIG_NOSYSTEM" => "1" }
+    [%w[init -q], %w[add -A], %w[commit -q -m fixture]].each do |args|
+      system(clean_env(git_env), "git", *args, chdir: @project, exception: true, **spawn_options)
+    end
+    stubs = TestSupport::Stubs.new(tmpdir)
+    stubs.add("ssh", "cat > /dev/null")
+    env = { "PATH" => "#{stubs.bin}:#{File.join(ROOT, 'bin')}:#{ENV.fetch('PATH')}", "BUNDLE_GEMFILE" => File.join(ROOT, "Gemfile"),
+            "RUBYLIB" => File.join(ROOT, "lib"), "REGISTRY_PASSWORD" => "example-password", "WEB_SERVER_IPS" => "192.0.2.10",
+            "DATABASE_SERVER_IPS" => "192.0.2.30", "SSH_USER" => "deploy", "KAMAL_VERSION" => "prebuilt-9",
+            "CI_DEPLOY_CONFIG" => "etc/kamal/deploy.yml" }
+    output, status = Open3.capture2e(clean_env(env), "ci-deploy-reconcile-removed-roles", chdir: @project, **spawn_options)
+    assert status.success?, output
+    assert_includes output, "[reconcile] example-app/none: desired roles = web"
+    assert_equal "sh -s 'example-app' '' 'web '", stubs.calls_to("ssh").first&.last
   end
 end

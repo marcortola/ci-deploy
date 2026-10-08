@@ -5,9 +5,8 @@ cd "$(dirname "$0")/.."
 
 shellcheck -x \
     bin/kamal bin/ci-deploy-host-control bin/ci-deploy-reconcile-removed-roles \
-    launcher/ci-deploy-local \
     lib/sh/*.sh lib/sh/reconcile-removed-roles.remote \
-    script/test script/lint script/integration \
+    script/test script/lint script/integration script/check-remote-pin \
     test/fixtures/hooks/*/* \
     test/integration/*.sh test/integration/host/entrypoint.sh \
     test/integration/apps/*/.kamal/hooks/* \

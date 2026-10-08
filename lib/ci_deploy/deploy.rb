@@ -32,7 +32,7 @@ module CiDeploy
       def success? = deploy_result == "success"
     end
 
-    def initialize(kamal:, runner:, github:, mode: "kamal", version: nil, rollback: "off", skip_hooks: false, before_deploy: nil, image_check: nil, git: nil)
+    def initialize(kamal:, runner:, github:, mode: "kamal", version: nil, rollback: "off", skip_hooks: false, before_deploy: nil, command_env: {})
       raise ArgumentError, "build mode must be one of #{MODES.join(', ')}, not #{mode.inspect}" unless MODES.include?(mode)
       raise ArgumentError, "rollback policy must be one of #{ROLLBACK_POLICIES.join(', ')}, not #{rollback.inspect}" unless ROLLBACK_POLICIES.include?(rollback)
 
@@ -44,8 +44,8 @@ module CiDeploy
       @rollback = rollback
       @skip_hooks = skip_hooks
       @before_deploy = Array(before_deploy)
-      @image_check = image_check || ImageCheck.new(kamal: kamal, runner: runner)
-      @git = git || runner
+      @command_env = command_env
+      @image_check = ImageCheck.new(kamal: kamal, runner: runner)
     end
 
     def call
@@ -74,7 +74,7 @@ module CiDeploy
       @github.set_output("previous-version", previous)
 
       unless @before_deploy.empty?
-        before = @runner.run(*@before_deploy)
+        before = @runner.run(*@before_deploy, env: @command_env)
         unless before.success?
           return finish(outcome, "before-deploy-failed", "The before-deploy command exited with status #{before.status}, so kamal deploy did not run.")
         end
@@ -112,11 +112,11 @@ module CiDeploy
         return @explicit_version
       end
 
-      head = @git.run("git", "rev-parse", "HEAD", echo: false, quiet: true)
+      head = @runner.run("git", "rev-parse", "HEAD", echo: false, quiet: true)
       raise ArgumentError, "the project directory is not a git checkout, so no version can be derived; pass one explicitly" unless head.success?
 
       version = head.output.strip
-      status = @git.run("git", "status", "--porcelain", echo: false, quiet: true)
+      status = @runner.run("git", "status", "--porcelain", echo: false, quiet: true)
       if status.success? && !status.output.strip.empty?
         version = "#{version}_uncommitted_#{SecureRandom.hex(8)}"
         @github.warning("The working tree has uncommitted changes, so the version carries an _uncommitted_ suffix.")

@@ -21,10 +21,11 @@ module TestSupport
   class FakeRunner
     Rule = Struct.new(:pattern, :responses, :used)
 
-    attr_reader :calls
+    attr_reader :calls, :envs
 
     def initialize
       @calls = []
+      @envs = []
       @rules = []
     end
 
@@ -34,9 +35,10 @@ module TestSupport
       self
     end
 
-    def run(*argv, echo: true, quiet: false)
+    def run(*argv, echo: true, quiet: false, env: {})
       argv = argv.flatten.map(&:to_s)
       @calls << argv
+      @envs << env
       rule = @rules.reverse.find { |candidate| matches?(candidate.pattern, argv) }
       response = if rule
                    chosen = rule.responses[[rule.used, rule.responses.size - 1].min]

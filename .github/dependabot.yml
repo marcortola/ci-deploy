@@ -8,14 +8,14 @@ updates:
       - /setup
       - /deploy
       - /operations
-      - /node
-      - /php
-      - /terraform
-      - /container
       - /dependabot-merge
       - /revision-check
     schedule:
       interval: weekly
+    # The remote-consumption workflow pins this repository's own action-code commit; the release
+    # procedure moves that pin, never Dependabot.
+    ignore:
+      - dependency-name: "marcortola/ci-deploy*"
     groups:
       github-actions:
         patterns: ["*"]
@@ -24,6 +24,11 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # A Kamal minor or major release can raise the kamal-proxy minimum version and so needs the
+    # proxy procedure on every host: it is upgraded by hand, as a release (docs/releasing.md).
+    ignore:
+      - dependency-name: kamal
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       bundler:
         patterns: ["*"]

@@ -12,7 +12,7 @@ can carry its own `image_version` boot setting, which `proxy-details` shows.
 ## Before the first Kamal 2.10 deploy
 
 1. **List the applications on each host.** For every component that deploys to the host, run the
-   `proxy-details` operation (or `bin/ci-deploy-local -- proxy details`) and note the proxy image
+   `proxy-details` operation and note the proxy image
    version and the boot configuration (`proxy boot_config get`).
 2. **If every host already runs v0.9.0 or later**, nothing else is needed.
 3. **Otherwise plan the reboot** in a window acceptable to every application on the host: the
@@ -44,8 +44,20 @@ The integration suite (`script/integration`) exercises this: two applications on
 v0.8.1, a refused Kamal 2.10 deploy, a refused untargeted reboot, the reboot to v0.9.0, and both
 applications checked before and after.
 
-## Note on `--image-version`
+## No version override
 
-Kamal 2.10's `proxy reboot` has no `--image-version` option. It boots the version in the host's
-boot configuration, or Kamal's minimum. `kamal proxy boot_config set --image-version` exists but
-is deprecated and resets the other boot options, so the catalog does not offer it.
+The proxy version is never overridden, by decision (amendment 1 of the approved plan): every host
+runs the version Kamal 2.10 boots by default, its minimum, v0.9.0
+(`Kamal::Configuration::Proxy::Run::MINIMUM_VERSION`).
+
+- Kamal 2.10's configuration has `proxy.run.version` (with `proxy.run.registry` and
+  `proxy.run.repository`), which pins the kamal-proxy image a configuration boots. It is
+  deliberately not used: the proxy is shared by every application on a host, so one
+  application's configuration must not decide its version, and a version set there would turn
+  an ordinary deploy or reboot from that configuration into a proxy change for every application.
+- `kamal proxy reboot` has no `--image-version` option, and `kamal proxy boot_config set
+  --image-version` is deprecated and resets the host's other boot options; the catalog offers
+  neither.
+
+A later proxy version therefore arrives only with a Kamal release that raises its minimum, through
+the procedure above.

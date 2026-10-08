@@ -21,15 +21,19 @@ inputs:
     required: false
     default: kamal
   version:
-    description: Image version. Empty derives it once from the commit, in Kamal's own format.
+    description: >-
+      Image version. Empty derives it once from the checkout: the commit SHA, plus one
+      `_uncommitted_<random>` suffix whenever the working tree is dirty. Unlike Kamal, which adds the
+      suffix only when the builder has a custom context (the default context is a clean git clone of
+      HEAD), the suffix is added in every build mode; keep generated files git-ignored to avoid it.
     required: false
     default: ""
   rollback:
     description: >-
-      auto: roll a failed deploy back to the version that was serving, and verify it on every host.
-      off: report only. Keep it off where hooks run migrations older code cannot run against.
-    required: false
-    default: "off"
+      Required, no default: auto rolls a failed deploy back to the version that was serving and
+      verifies it on every host; off only reports. Keep it off where hooks run migrations older code
+      cannot run against.
+    required: true
   skip-hooks:
     description: Pass --skip-hooks to kamal deploy. Only for the documented env-file deadlock; never a default.
     required: false
@@ -119,6 +123,7 @@ runs:
       if: always() && inputs.cleanup-command != ''
       shell: bash
       env:
+        CI_DEPLOY_IN_DESTINATION: ${{ inputs.destination }}
         CI_DEPLOY_IN_CLEANUP_COMMAND: ${{ inputs.cleanup-command }}
       run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" cleanup
 

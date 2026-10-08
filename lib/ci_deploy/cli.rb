@@ -12,14 +12,11 @@ require_relative "env_export"
 require_relative "terraform_outputs"
 require_relative "operations"
 require_relative "revision_check"
-require_relative "local"
 
 module CiDeploy
   # Entry point for the actions' steps. Every input arrives as an environment variable (never
   # interpolated into a script), and every command runs as an argument vector.
   class CLI
-    HOME = File.expand_path("../..", __dir__)
-
     def initialize(argv, env: ENV, out: $stdout)
       @argv = argv
       @env = env
@@ -39,16 +36,15 @@ module CiDeploy
         "notify" => :notify,
         "finish" => :finish,
         "operation" => :operation,
-        "revision-check" => :revision_check,
-        "local" => :local
+        "revision-check" => :revision_check
       }[command]
       unless handler
-        @out.puts "usage: ci-deploy <#{%w[export-env terraform-outputs prepare-secrets kamal-env deploy cleanup notify finish operation revision-check local].join('|')}>"
+        @out.puts "usage: ci-deploy <#{%w[export-env terraform-outputs prepare-secrets kamal-env deploy cleanup notify finish operation revision-check].join('|')}>"
         return 2
       end
 
       send(handler) || 0
-    rescue ArgumentError, TerraformOutputs::Error, Metadata::PolicyViolation, Kamal::Error, Local::Usage => e
+    rescue ArgumentError, TerraformOutputs::Error, Metadata::PolicyViolation, Kamal::Error => e
       @github.error(e.message)
       1
     end
@@ -137,14 +133,19 @@ module CiDeploy
       0
     end
 
+    # Any failure before Deploy reports its own result (a refused policy, an invalid input, a
+    # project that is not a git checkout, `kamal config` failing) still sets deploy-result, so the
+    # report says what happened instead of "cancelled or interrupted".
     def deploy
       ensure_same_revision!
+      policy = input("BRANCH_POLICY", "enforce")
       metadata = Metadata.new(github: @github, branch: @env.fetch("GITHUB_REF_NAME", ""), commit: @env.fetch("GITHUB_SHA", ""),
                               destination: input("DESTINATION"), production_branch: input("PRODUCTION_BRANCH", "main"),
                               production_destination: input("PRODUCTION_DESTINATION", "production"),
-                              policy: input("BRANCH_POLICY", "enforce"))
+                              policy: policy)
       begin
         metadata.validate!
+        ensure_checkout_is_the_workflow_commit! if policy == "enforce"
       rescue Metadata::PolicyViolation
         @github.set_output("deploy-result", "refused")
         @github.set_output("rollback-result", "not-attempted")
@@ -152,11 +153,42 @@ module CiDeploy
       end
       metadata.export
 
+      rollback = input("ROLLBACK")
+      raise ArgumentError, "the rollback input is required: auto or off" if rollback.empty?
+
       outcome = Deploy.new(kamal: kamal, runner: runner, github: @github, mode: input("BUILD_MODE", "kamal"),
-                           version: input("VERSION"), rollback: input("ROLLBACK", "off"),
-                           skip_hooks: input("SKIP_HOOKS", "false") == "true", before_deploy: before_deploy_command).call
+                           version: input("VERSION"), rollback: rollback,
+                           skip_hooks: input("SKIP_HOOKS", "false") == "true", before_deploy: before_deploy_command,
+                           command_env: command_env).call
       @out.puts "Deploy result: #{outcome.deploy_result}; rollback: #{outcome.rollback_result}"
       outcome.success? ? 0 : 1
+    rescue ArgumentError, Kamal::Error => e
+      @github.set_output("deploy-result", "error")
+      @github.set_output("rollback-result", "not-attempted")
+      raise e
+    end
+
+    # The branch policy checks GITHUB_REF_NAME and GITHUB_SHA; the code deployed is the checkout's
+    # HEAD. Under `enforce` they must be the same commit, or a policy-checked run could deploy
+    # other code.
+    def ensure_checkout_is_the_workflow_commit!
+      expected = @env.fetch("GITHUB_SHA", "")
+      return if expected.empty?
+
+      head = runner.run("git", "rev-parse", "HEAD", echo: false, quiet: true)
+      return unless head.success?
+      return if head.output.strip == expected
+
+      raise Metadata::PolicyViolation,
+            "The checkout is at #{head.output.strip}, not the workflow's commit #{expected}; with branch-policy enforce the deployed code must be the commit the policy checked."
+    end
+
+    # The before-deploy and cleanup commands see the destination the way Kamal's hooks do, so a
+    # helper such as ci-deploy-host-control acts only for the destination being deployed. Without
+    # a destination the variable is removed, never inherited from the job.
+    def command_env
+      destination = input("DESTINATION")
+      { "KAMAL_DESTINATION" => destination.empty? ? nil : destination }
     end
 
     # Split like the cleanup command: words, no shell. Empty runs nothing.
@@ -176,7 +208,7 @@ module CiDeploy
       return 0 if command.empty?
 
       argv = Shellwords.split(command)
-      result = runner.run(*argv)
+      result = runner.run(*argv, env: command_env)
       @github.warning("The cleanup command exited with status #{result.status}; the deploy result is unchanged.") unless result.success?
       0
     rescue ArgumentError => e
@@ -232,9 +264,7 @@ module CiDeploy
 
     def revision_check
       component = input("COMPONENT", ".")
-      launcher = input("LAUNCHER")
       check = RevisionCheck.new(component: component, workflows: input("WORKFLOWS", ".github/workflows"),
-                                launcher: launcher, launcher_template: File.join(HOME, "launcher", "ci-deploy-local"),
                                 own_ref: input("OWN_REF", RevisionCheck.ref_from_action_path(@env.fetch("CI_DEPLOY_ACTION_HOME", ""))))
       result = check.call
       result.errors.each { |error| @github.error(error) }
@@ -243,10 +273,6 @@ module CiDeploy
       @out.puts "#{RevisionCheck::REPOSITORY} is pinned to #{result.sha} in #{result.references.size} references."
       @github.set_output("sha", result.sha)
       0
-    end
-
-    def local
-      Local.new(@argv.drop(1), env: @env, out: @out).call
     end
   end
 end

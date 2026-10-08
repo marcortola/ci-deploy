@@ -22,7 +22,7 @@ module CiDeploy
     def list(name, required: true, env: ENV)
       hosts = parse(env.fetch(name, ""))
       if hosts.empty? && required
-        raise MissingHosts, "#{name} holds no host. Map it to a Terraform output in the setup action, or export it for the local launcher."
+        raise MissingHosts, "#{name} holds no host. Map it to a Terraform output in the setup action."
       end
 
       hosts

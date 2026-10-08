@@ -1,8 +1,8 @@
 # ci-deploy
 
-Shared GitHub Actions and a local launcher for deploying and operating applications with
+Shared GitHub Actions for deploying and operating applications with
 [Kamal](https://kamal-deploy.org). One pinned revision of this repository provides the Kamal
-version, the deploy flow, the hook helpers and the operations catalog, in CI and on a laptop alike.
+version, the deploy flow, the hook helpers and the operations catalog.
 
 Released under the MIT licence; see `LICENSE`.
 
@@ -10,15 +10,11 @@ Released under the MIT licence; see `LICENSE`.
 
 | Directory | What it does |
 | --- | --- |
-| `setup/` | Checks out the component, installs Ruby 3.3 and the locked Kamal (2.10.0), loads the SSH key, exports variables, secrets and Terraform outputs, copies the Kamal secrets file and puts this revision's helpers on `PATH`. |
-| `deploy/` | Builds (or checks) one explicit image version, deploys exactly that version, optionally rolls back, then always runs cleanup and Rollbar reporting and re-raises the deploy's own result. |
+| `setup/` | Checks out the component at the workflow's commit, installs Ruby 3.3 and the locked Kamal (2.10.0), loads the SSH key, exports variables, secrets and Terraform outputs, copies the Kamal secrets file, puts this revision's helpers on `PATH` and exports `BUNDLE_GEMFILE` and `RUBYLIB` for the rest of the job. |
+| `deploy/` | Builds (or checks) one explicit image version, deploys exactly that version, rolls back if the required `rollback` input says so, then always runs cleanup and Rollbar reporting and re-raises the deploy's own result. |
 | `operations/` | The operations catalog: accessories, commands on hosts or in the app, consoles per stack, logs, proxy details, restart and reboot (explicit target only), free Kamal arguments. |
-| `node/`, `php/` | Toolchain setup with dependency caches and a frozen install. |
-| `terraform/` | `terraform fmt`, `init` (with retries and any arguments, e.g. `-lockfile=readonly`) and `validate` for every root module. |
-| `container/` | Build with Buildx and the GitHub Actions cache, smoke commands inside the image, optional publish. |
 | `dependabot-merge/` | Merges a Dependabot security fix inside the caret range with an open alert; optionally dispatches the deploy workflow. |
-| `revision-check/` | Fails unless a component pins every reference to this repository to one full SHA, only from top-level workflows, with the vendored launcher matching. |
-| `launcher/ci-deploy-local` | The local launcher, copied unchanged into each component. |
+| `revision-check/` | Fails unless a component references this repository only from top-level workflows (every file git knows about is scanned), all pinned to one full SHA. |
 | `lib/sh/hooks.sh` | Helpers Kamal hooks source to run a command from the incoming image or in the live container. |
 | `bin/` | `kamal` (the locked version), `ci-deploy-reconcile-removed-roles`, `ci-deploy-host-control`; on `PATH` after setup. |
 
@@ -51,11 +47,13 @@ jobs:
       - uses: marcortola/ci-deploy/deploy@<sha> # v1.0.0
         with:
           destination: staging
-          rollback: "off"
+          rollback: "off"   # required: auto or off
 
+  revision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha> # v7.0.1
       - uses: marcortola/ci-deploy/revision-check@<sha> # v1.0.0
-        with:
-          launcher: bin/ci-deploy-local
 ```
 
 Each action's `action.yml` documents its inputs and outputs. The guides:
@@ -64,7 +62,6 @@ Each action's `action.yml` documents its inputs and outputs. The guides:
   implementations diverge and the input that covers each.
 - [Hooks](docs/hooks.md): the helpers, container selection and examples.
 - [Operations](docs/operations.md): the catalog and its guards.
-- [Local launcher](docs/local-launcher.md).
 - [kamal-proxy pre-check and upgrade](docs/proxy.md).
 - [Dependabot](docs/dependabot.md): the consumer template.
 - [Reverting](docs/reverting.md): undoing an adoption or a bad release.
@@ -80,6 +77,7 @@ nix develop --command bundle install
 nix develop --command script/lint          # ShellCheck and actionlint
 nix develop --command script/test          # unit suite (Minitest), includes a real `kamal config` render
 nix develop --command script/integration   # slow: Docker-in-Docker servers, registry, two apps, proxy upgrade
+script/check-remote-pin                     # the remote-consumption pin carries HEAD's action code
 ```
 
 The integration suite needs Docker with privileged containers and binds 127.0.0.1:55000,

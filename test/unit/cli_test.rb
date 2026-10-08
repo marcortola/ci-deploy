@@ -29,7 +29,9 @@ class CliTest < Minitest::Test
     SH
   end
 
+  # The deploy step needs an explicit rollback policy; tests that are not about it use off.
   def step(command, inputs = {}, env = {})
+    inputs = { rollback: "off" }.merge(inputs) if command == "deploy"
     base = @gh.env.merge("PATH" => @stubs.path, "CI_DEPLOY_HOME" => ROOT, "CI_DEPLOY_ACTION_HOME" => ROOT,
                          "CI_DEPLOY_PROJECT_DIR" => @project, "CI_DEPLOY_CONFIG" => "etc/kamal/deploy.yml",
                          "GITHUB_REF_NAME" => "main", "GITHUB_SHA" => SHA, "GITHUB_REPOSITORY" => "example/app")
@@ -71,6 +73,64 @@ class CliTest < Minitest::Test
     assert_empty @stubs.calls_to("kamal")
   end
 
+  def test_the_rollback_policy_is_required
+    output, status = step("deploy", rollback: "")
+    refute status.success?
+    assert_includes output, "the rollback input is required: auto or off"
+    assert_equal({ "deploy-result" => "error", "rollback-result" => "not-attempted" }, @gh.outputs)
+    assert_empty @stubs.calls_to("kamal")
+  end
+
+  def test_an_invalid_version_reports_error_not_cancelled
+    output, status = step("deploy", version: "not a tag")
+    refute status.success?
+    assert_includes output, "is not a valid image tag"
+    assert_equal "error", @gh.outputs["deploy-result"]
+    assert_equal "not-attempted", @gh.outputs["rollback-result"]
+    assert_empty @stubs.calls_to("kamal")
+  end
+
+  def test_a_project_that_is_not_a_git_checkout_reports_error
+    @stubs.add("git", "exit 128")
+    output, status = step("deploy", branch_policy: "off")
+    refute status.success?
+    assert_includes output, "is not a git checkout"
+    assert_equal "error", @gh.outputs["deploy-result"]
+  end
+
+  def test_a_failing_kamal_config_in_prebuilt_mode_reports_error
+    @stubs.add("kamal", <<~SH)
+      case "$1" in
+        app) printf 'App Host: 192.0.2.10\nprevious\n\n' ;;
+        config) echo "ERROR (KeyError): missing secret" >&2; exit 1 ;;
+      esac
+    SH
+    output, status = step("deploy", build_mode: "prebuilt", version: "v2")
+    refute status.success?
+    assert_includes output, "kamal config failed"
+    assert_equal "error", @gh.outputs["deploy-result"]
+    assert_equal "not-attempted", @gh.outputs["rollback-result"]
+    refute(@stubs.calls_to("kamal").any? { |args| args.first == "deploy" })
+  end
+
+  def test_an_error_result_is_reported_as_failed_and_re_raised
+    output, status = step("finish", result: "error", rollback_result: "not-attempted")
+    refute status.success?
+    assert_includes output, "Deploy finished with result 'error'"
+  end
+
+  def test_enforce_refuses_a_checkout_that_is_not_the_workflow_commit
+    @stubs.add("git", "case \"$*\" in \"rev-parse HEAD\") echo #{"f" * 40} ;; esac")
+    output, status = step("deploy")
+    refute status.success?
+    assert_includes output, "not the workflow's commit #{SHA}"
+    assert_equal({ "deploy-result" => "refused", "rollback-result" => "not-attempted" }, @gh.outputs)
+    assert_empty @stubs.calls_to("kamal")
+
+    _output, status = step("deploy", branch_policy: "off")
+    assert status.success?, "branch-policy off deploys the checkout as it is"
+  end
+
   def test_branch_policy_off_and_custom_production_names
     _output, status = step("deploy", { destination: "staging", branch_policy: "off" })
     assert status.success?
@@ -96,6 +156,43 @@ class CliTest < Minitest::Test
     output, status = step("finish", result: "deploy-failed", rollback_result: "disabled")
     refute status.success?
     assert_includes output, "'deploy-failed'"
+  end
+
+  # The setup action puts this repository's bin/ on PATH (after the stubs here, so kamal and ssh record).
+  def host_control_env
+    @stubs.add("ssh")
+    { "PATH" => "#{@stubs.path}:#{File.join(ROOT, 'bin')}", "SSH_USER" => "deploy", "SERVER_IPS" => "192.0.2.10",
+      "KAMAL_DESTINATION" => "production" }
+  end
+
+  def test_host_control_skips_a_staging_deploy_through_the_before_deploy_and_cleanup_commands
+    command = "ci-deploy-host-control --command /usr/local/sbin/example-control"
+    env = host_control_env
+    output, status = step("deploy", { destination: "staging", branch_policy: "off", before_deploy_command: "#{command} pause" }, env)
+    assert status.success?, output
+    _output, status = step("cleanup", { destination: "staging", cleanup_command: "#{command} resume" }, env)
+    assert status.success?
+    assert_empty @stubs.calls_to("ssh"), "a job-level KAMAL_DESTINATION must not leak into a staging deploy"
+  end
+
+  def test_host_control_runs_for_production_through_the_before_deploy_and_cleanup_commands
+    command = "ci-deploy-host-control --command /usr/local/sbin/example-control"
+    env = host_control_env
+    output, status = step("deploy", { destination: "production", before_deploy_command: "#{command} pause" }, env)
+    assert status.success?, output
+    _output, status = step("cleanup", { destination: "production", cleanup_command: "#{command} resume" }, env)
+    assert status.success?
+    assert_equal ["sudo -n /usr/local/sbin/example-control pause", "sudo -n /usr/local/sbin/example-control resume"],
+                 @stubs.calls_to("ssh").map(&:last)
+  end
+
+  def test_without_a_destination_the_commands_see_no_kamal_destination
+    @stubs.add("show-destination", %(echo "destination=${KAMAL_DESTINATION-unset}" >> "#{tmpdir}/destination.log"))
+    _output, status = step("deploy", { before_deploy_command: "show-destination" }, "KAMAL_DESTINATION" => "staging")
+    assert status.success?
+    _output, status = step("cleanup", { cleanup_command: "show-destination" }, "KAMAL_DESTINATION" => "staging")
+    assert status.success?
+    assert_equal "destination=unset\ndestination=unset\n", File.read(File.join(tmpdir, "destination.log"))
   end
 
   def test_cleanup_command_is_not_run_through_a_shell

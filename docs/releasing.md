@@ -8,6 +8,8 @@ of `main` whose checks passed.
    request changes an action, `lib`, `bin` or the bundle, its last commit re-pins
    `.github/workflows/remote-consumer.yml` and `test/fixtures/revision-consumer` to the commit
    carrying that code: `script/check-remote-pin` fails CI until the pin's action code matches HEAD.
+   The repository allows merge commits only: a squash or rebase merge would leave the pinned
+   commit out of `main`'s history, and `main`'s CI would fail once the branch is deleted.
 2. Choose the version (SemVer): a new input or operation is a minor release; a changed default,
    a removed input, a Kamal minor or major upgrade or any change a consumer must act on is a
    major release; fixes are patch releases.

@@ -1,0 +1,34 @@
+# Dependabot reads one directory per entry and does not descend into subdirectories, so every
+# action directory is listed: an action.yml outside this list would keep its pins forever.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /setup
+      - /deploy
+      - /operations
+      - /dependabot-merge
+      - /revision-check
+    schedule:
+      interval: weekly
+    # The remote-consumption workflow pins this repository's own action-code commit; the release
+    # procedure moves that pin, never Dependabot.
+    ignore:
+      - dependency-name: "marcortola/ci-deploy*"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: bundler
+    directory: /
+    schedule:
+      interval: weekly
+    # A Kamal minor or major release can raise the kamal-proxy minimum version and so needs the
+    # proxy procedure on every host: it is upgraded by hand, as a release (docs/releasing.md).
+    ignore:
+      - dependency-name: kamal
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+    groups:
+      bundler:
+        patterns: ["*"]

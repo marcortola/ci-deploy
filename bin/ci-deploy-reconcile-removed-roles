@@ -1,0 +1,79 @@
+#!/bin/sh
+#
+# Reconcile roles removed from the Kamal config (orphaned-container cleanup).
+#
+# Kamal is not a reconciler: when each worker replica is its own role (worker_<type>_<N>, generated
+# from a count), lowering the count drops the higher-indexed roles from the rendered config. Kamal
+# only ever acts on roles STILL in the config -- every native command (deploy / prune / app stop /
+# app stale_containers) filters by `label=role=<role>` for roles it reads from the config -- so a
+# removed role becomes invisible and its container keeps running old code forever.
+#
+# This asks Kamal which roles SHOULD exist (`kamal config`, which deep-merges the base and
+# destination files, secrets redacted) and, on each configured host, removes any RUNNING container
+# of this service+destination whose `role` label is not in that set (see the .remote companion in
+# lib/sh). Membership is by ROLE, not version, so it is immune to `--roles`-scoped deploys and needs
+# no version math; accessories are scoped out by the service/destination labels Kamal stamps on
+# every app container.
+#
+# Run it once, locally, from the post-deploy hook. Env in: SSH_USER, SSH_PORT, KAMAL_DESTINATION,
+# KAMAL_VERSION. Optional args: a `kamal config` selector, e.g.
+#   ci-deploy-reconcile-removed-roles -c "./etc/kamal/deploy-$KAMAL_DESTINATION.yml"
+# Without one it uses CI_DEPLOY_HOOK_CONFIG or CI_DEPLOY_CONFIG (else ./etc/kamal/deploy.yml) and
+# KAMAL_DESTINATION. Best-effort -- it never fails the deploy.
+set -e
+
+_here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+_remote="$_here/../lib/sh/reconcile-removed-roles.remote"
+[ -f "$_remote" ] || { echo "[reconcile] $_remote missing; skipping"; exit 0; }
+[ -n "${SSH_USER:-}" ] || { echo "[reconcile] SSH_USER unset; skipping"; exit 0; }
+[ -n "${KAMAL_VERSION:-}" ] || { echo "[reconcile] KAMAL_VERSION unset; skipping"; exit 0; }
+_ssh_port="${SSH_PORT:-22}"
+
+if [ "$#" -eq 0 ]; then
+    _config="${CI_DEPLOY_HOOK_CONFIG:-${CI_DEPLOY_CONFIG:-./etc/kamal/deploy.yml}}"
+    if [ -n "${KAMAL_DESTINATION:-}" ]; then
+        set -- -c "$_config" -d "$KAMAL_DESTINATION"
+    else
+        set -- -c "$_config"
+    fi
+fi
+
+# The service name is read as <service>-<KAMAL_VERSION>, so Kamal must render that very version:
+# left to itself it derives one from git (another SHA, an _uncommitted_ suffix), the suffix check
+# below fails and the reconcile skips every time a deploy used an explicit or prebuilt version.
+_has_version=false
+for _arg in "$@"; do
+    case "$_arg" in --version|--version=*) _has_version=true ;; esac
+done
+[ "$_has_version" = true ] || set -- "$@" --version "$KAMAL_VERSION"
+
+# Roles / hosts / service, straight from the rendered (and merged) config. Kamal prints its keys as
+# Ruby symbols (`:roles:`); the plain form is accepted too.
+_cfg=$(kamal config "$@" 2>/dev/null) \
+    || { echo "[reconcile] 'kamal config' failed; skipping (fail-safe)"; exit 0; }
+
+_list() {
+    printf '%s\n' "$_cfg" | awk -v key="$1" '/^:?[A-Za-z_][A-Za-z0-9_]*:/{s=($0==key":"||$0==":"key":")} s&&/^-[ \t]/{v=$0;sub(/^-[ \t]+/,"",v);gsub(/[" ]/,"",v);print v}'
+}
+_roles=$(_list roles)
+_hosts=$(_list hosts)
+_svc_ver=$(printf '%s\n' "$_cfg" | awk '/^:?service_with_version:/{v=$0; sub(/^:?service_with_version:[ \t]*/, "", v); gsub(/[" ]/, "", v); print v; exit}')
+_service=${_svc_ver%-"$KAMAL_VERSION"}
+
+# Fail-safe: an empty/garbled config must NEVER run (it would treat every running container as an
+# orphan), nor may a service name that did not end in this version.
+if [ -z "$_roles" ] || [ -z "$_hosts" ] || [ -z "$_service" ] || [ "$_service" = "$_svc_ver" ]; then
+    echo "[reconcile] incomplete config (roles/hosts/service); skipping (fail-safe)"
+    exit 0
+fi
+
+# newline-separated -> single space-separated line (matched with word boundaries in the .remote
+# companion); no reliance on word-splitting.
+_roles_line=$(printf '%s\n' "$_roles" | tr '\n' ' ')
+echo "[reconcile] $_service/${KAMAL_DESTINATION:-none}: desired roles = ${_roles_line}"
+for _host in $_hosts; do
+    echo "[reconcile] host $_host:"
+    ssh -p "$_ssh_port" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 \
+        "$SSH_USER@$_host" "sh -s '$_service' '${KAMAL_DESTINATION:-}' '$_roles_line'" < "$_remote" \
+        || echo "  ssh failed (non-fatal)"
+done

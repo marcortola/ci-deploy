@@ -1,0 +1,6 @@
+servers:
+  web:
+    hosts: <%= CiDeploy::Hosts.list("STAGING_SERVER_IPS").to_json %>
+
+proxy:
+  host: staging.example.com

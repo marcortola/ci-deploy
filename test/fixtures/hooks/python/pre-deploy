@@ -1,0 +1,10 @@
+#!/bin/sh
+# Example consumer hook (Python): no role filter, one configuration file per environment and no
+# destination, migrations from the incoming image with retries.
+set -eu
+CI_DEPLOY_HOOK_ROLES=""
+CI_DEPLOY_HOOK_CONFIG="./services/api/etc/kamal/deploy-production.yml"
+# shellcheck source=lib/sh/hooks.sh
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
+
+ci_deploy_retry 3 0 ci_deploy_python new-image "manage.py migrate --noinput"

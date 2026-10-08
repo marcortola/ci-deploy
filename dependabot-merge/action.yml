@@ -1,0 +1,39 @@
+name: ci-deploy dependabot-merge
+description: >-
+  Merges a Dependabot security fix that stays inside the caret range of the current version and has
+  an open Dependabot alert, then optionally dispatches the deploy workflow. Grouped updates and
+  GitHub Actions updates are held for review. Run it on pull_request events from dependabot[bot],
+  after the quality gate, with permissions actions: write (only with deploy-workflow),
+  contents: write, pull-requests: write and vulnerability-alerts: read.
+
+inputs:
+  github-token:
+    description: Token that merges the pull request and dispatches the deploy workflow.
+    required: false
+    default: ${{ github.token }}
+  deploy-workflow:
+    description: Workflow file dispatched on the default branch after the merge; empty dispatches nothing.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - id: meta
+      uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      with:
+        github-token: ${{ inputs.github-token }}
+
+    - name: Merge a safe security fix
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        GH_REPO: ${{ github.repository }}
+        PR_URL: ${{ github.event.pull_request.html_url }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        DEPS: ${{ steps.meta.outputs.updated-dependencies-json }}
+        DEPENDENCY_GROUP: ${{ steps.meta.outputs.dependency-group }}
+        ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+        DEPLOY_WORKFLOW: ${{ inputs.deploy-workflow }}
+      run: bash "$GITHUB_ACTION_PATH/../lib/sh/dependabot-merge.sh"

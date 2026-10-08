@@ -1,0 +1,4 @@
+#!/bin/sh
+# The slow integration suite (Docker required): see test/integration/run.sh.
+set -eu
+exec "$(dirname "$0")/../test/integration/run.sh" "$@"

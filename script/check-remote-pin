@@ -1,0 +1,21 @@
+#!/bin/sh
+# Fails unless the remote-consumption workflow pins one commit whose action code is the code at
+# HEAD: the actions, lib, bin and the locked bundle. Run in CI with the full history.
+set -eu
+cd "$(dirname "$0")/.."
+
+workflow=.github/workflows/remote-consumer.yml
+pins=$(grep -oiE 'marcortola/ci-deploy(/[A-Za-z0-9_./-]*)?@[^[:space:]#]+' "$workflow" | sed 's/.*@//' | sort -u)
+[ -n "$pins" ] || { echo "check-remote-pin: $workflow references no marcortola/ci-deploy revision" >&2; exit 1; }
+[ "$(printf '%s\n' "$pins" | wc -l)" -eq 1 ] || { printf 'check-remote-pin: %s pins several revisions:\n%s\n' "$workflow" "$pins" >&2; exit 1; }
+pin=$pins
+printf '%s\n' "$pin" | grep -Eqx '[0-9a-f]{40}' || { echo "check-remote-pin: $pin is not a full commit SHA" >&2; exit 1; }
+git cat-file -e "$pin^{commit}" 2>/dev/null || { echo "check-remote-pin: $pin is not in this repository's history" >&2; exit 1; }
+
+set -- setup deploy operations dependabot-merge revision-check lib bin Gemfile Gemfile.lock .ruby-version
+if ! git diff --quiet "$pin" HEAD -- "$@"; then
+    echo "check-remote-pin: the action code at HEAD differs from the pinned $pin; re-pin $workflow (docs/releasing.md):" >&2
+    git diff --stat "$pin" HEAD -- "$@" >&2
+    exit 1
+fi
+echo "check-remote-pin: $workflow pins $pin, whose action code matches HEAD"

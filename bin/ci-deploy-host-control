@@ -1,0 +1,74 @@
+#!/bin/sh
+#
+# Runs one action of a fixed control command on the primary host over SSH, for a service that must
+# be paused around a rollout and restored afterwards (for example a telemetry stack that would
+# compete with the deploy for the host's resources).
+#
+#   ci-deploy-host-control --command /usr/local/sbin/<control> [options] <action>
+#
+# Options:
+#   --command PATH         absolute path of the control command on the host (required)
+#   --actions LIST         allowed actions, comma-separated (default: pause,resume,verify)
+#   --hosts-var NAME       variable holding the host list; the first host is used (default: SERVER_IPS)
+#   --destinations LIST    destinations it applies to, comma-separated; others exit 0 without
+#                          connecting. A missing KAMAL_DESTINATION counts as the first in the list.
+#                          (default: production)
+#   --no-sudo              run the command directly instead of through `sudo -n`
+#
+# Env in: SSH_USER (required), SSH_PORT (default 22), KAMAL_DESTINATION, the hosts variable.
+# Exits with the remote command's status, so the caller decides whether a failure is fatal: a
+# pre-deploy pause usually is, a post-deploy resume usually only warns.
+set -eu
+
+_command=""
+_actions="pause,resume,verify"
+_hosts_var="SERVER_IPS"
+_destinations="production"
+_sudo="sudo -n "
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --command) _command=${2:-}; shift 2 ;;
+        --actions) _actions=${2:-}; shift 2 ;;
+        --hosts-var) _hosts_var=${2:-}; shift 2 ;;
+        --destinations) _destinations=${2:-}; shift 2 ;;
+        --no-sudo) _sudo=""; shift ;;
+        --) shift; break ;;
+        -*) echo "ci-deploy-host-control: unknown option $1" >&2; exit 64 ;;
+        *) break ;;
+    esac
+done
+_action=${1:-}
+
+case "$_command" in
+    /*) ;;
+    *) echo "ci-deploy-host-control: --command must be an absolute path" >&2; exit 64 ;;
+esac
+case "$_command" in
+    *[!A-Za-z0-9._/-]*) echo "ci-deploy-host-control: --command contains characters outside [A-Za-z0-9._/-]" >&2; exit 64 ;;
+esac
+case "$_action" in
+    ''|*[!a-z0-9-]*) echo "ci-deploy-host-control: usage: ci-deploy-host-control --command PATH [options] <$_actions>" >&2; exit 64 ;;
+esac
+case ",$_actions," in
+    *",$_action,"*) ;;
+    *) echo "ci-deploy-host-control: action '$_action' is not one of: $_actions" >&2; exit 64 ;;
+esac
+case "$_hosts_var" in
+    ''|[0-9]*|*[!A-Za-z0-9_]*) echo "ci-deploy-host-control: invalid --hosts-var" >&2; exit 64 ;;
+esac
+
+_destination=${KAMAL_DESTINATION:-${_destinations%%,*}}
+case ",$_destinations," in
+    *",$_destination,"*) ;;
+    *) exit 0 ;;
+esac
+
+: "${SSH_USER:?ci-deploy-host-control: SSH_USER is required}"
+_hosts=$(printenv "$_hosts_var" || true)
+_host=$(printf '%s\n' "$_hosts" | tr ',[:blank:]' '[\n*]' | sed -n '/./{p;q;}')
+case "$_host" in
+    ''|*[!A-Za-z0-9._:-]*) echo "ci-deploy-host-control: invalid or missing primary host in $_hosts_var" >&2; exit 1 ;;
+esac
+
+ssh -p "${SSH_PORT:-22}" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o ConnectTimeout=10 \
+    "$SSH_USER@$_host" "${_sudo}${_command} ${_action}"

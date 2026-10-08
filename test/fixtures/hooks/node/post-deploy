@@ -1,0 +1,14 @@
+#!/bin/sh
+# Example consumer hook (Node): migrations in the live container once it runs the new code, then a
+# best-effort verification in a disposable container.
+set -eu
+# shellcheck source=lib/sh/hooks.sh
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
+
+if ci_deploy_is_rollback; then
+    exit 0
+fi
+
+ci_deploy_node live-container "npm run db:migrate"
+ci_deploy_node new-image "node dist/bin/verify.js" \
+    || echo "::warning::verification failed; the deploy stands."

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Example consumer hook (Symfony): orphaned-role cleanup, then maintenance against the new image.
+set -eu
+# shellcheck source=lib/sh/hooks.sh
+. "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action or launcher}/hooks.sh"
+
+if ci_deploy_is_rollback; then
+    exit 0
+fi
+
+ci-deploy-reconcile-removed-roles || echo "[reconcile] skipped (non-fatal)"
+ci_deploy_symfony new-image "app:messaging:prune --force"
+ci_deploy_symfony new-image "app:search:reindex --batch-size=100"

@@ -1,0 +1,55 @@
+name: ci-deploy terraform
+description: >-
+  Checks formatting, then runs terraform init and validate in every root module without touching
+  state. Init is retried because provider downloads flap; validate is deterministic and is not.
+
+inputs:
+  terraform-version:
+    description: Terraform version for hashicorp/setup-terraform.
+    required: false
+    default: latest
+  setup:
+    description: Install Terraform first ('true' or 'false').
+    required: false
+    default: "true"
+  root:
+    description: Directory searched for root modules and checked for formatting.
+    required: false
+    default: terraform
+  directories:
+    description: Root modules to check, one per line; empty discovers every directory with a backend.tf.
+    required: false
+    default: ""
+  fmt:
+    description: Check formatting ('true' or 'false').
+    required: false
+    default: "true"
+  init-args:
+    description: terraform init arguments, separated by spaces. Add -lockfile=readonly to refuse lockfile changes.
+    required: false
+    default: "-backend=false -input=false"
+  init-attempts:
+    description: terraform init attempts per module.
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Terraform
+      if: inputs.setup == 'true'
+      uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: false
+
+    - name: Check formatting, init and validate
+      shell: bash
+      env:
+        TF_IN_AUTOMATION: "1"
+        TF_ROOT: ${{ inputs.root }}
+        TF_DIRECTORIES: ${{ inputs.directories }}
+        TF_FMT: ${{ inputs.fmt }}
+        TF_INIT_ARGS: ${{ inputs.init-args }}
+        TF_INIT_ATTEMPTS: ${{ inputs.init-attempts }}
+      run: bash "$GITHUB_ACTION_PATH/../lib/sh/terraform-check.sh"

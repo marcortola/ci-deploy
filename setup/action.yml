@@ -1,0 +1,149 @@
+name: ci-deploy setup
+description: >-
+  Checks out the component, prepares Ruby and the locked Kamal bundle from this repository, loads
+  the SSH key, exports variables, secrets and Terraform outputs, and copies the Kamal secrets file.
+  Run it before the deploy or operations action, pinned to the same SHA.
+
+inputs:
+  checkout:
+    description: "Check out the repository first ('true' or 'false')."
+    required: false
+    default: "true"
+  ref:
+    description: Ref to check out; empty uses the event's ref.
+    required: false
+    default: ""
+  project-directory:
+    description: Directory holding the Kamal configuration, relative to the workspace. Kamal runs here.
+    required: false
+    default: "."
+  config:
+    description: Kamal configuration file, relative to the project directory.
+    required: false
+    default: etc/kamal/deploy.yml
+  secrets-file:
+    description: Kamal secrets file, relative to the project directory, copied to .kamal/ under its own name. Empty skips it.
+    required: false
+    default: etc/kamal/secrets-common
+  vars:
+    description: The workflow's variables as JSON (toJSON(vars)), exported under their own names.
+    required: false
+    default: ""
+  secrets:
+    description: The workflow's secrets as JSON (toJSON(secrets)), exported under their own names and masked.
+    required: false
+    default: ""
+  outputs-map:
+    description: >-
+      Terraform outputs to export, one NAME=output per line. NAME=output[0] takes the first element;
+      a trailing ? makes the output optional. Lists are exported comma-separated.
+    required: false
+    default: ""
+  terraform-token:
+    description: HCP Terraform API token, required with an outputs map.
+    required: false
+    default: ""
+  terraform-workspace:
+    description: HCP Terraform workspace id (ws-...), required with an outputs map.
+    required: false
+    default: ""
+  terraform-address:
+    description: Terraform API address; empty uses https://app.terraform.io.
+    required: false
+    default: ""
+  ssh-private-key:
+    description: SSH private key loaded into an agent for Kamal. Empty skips the agent.
+    required: false
+    default: ""
+  registry:
+    description: Registry server, exported as REGISTRY when set.
+    required: false
+    default: ""
+  registry-user:
+    description: Registry user, exported as REGISTRY_USER when set.
+    required: false
+    default: ""
+  registry-password:
+    description: Registry password, exported (masked) as REGISTRY_PASSWORD when set.
+    required: false
+    default: ""
+  ssh-user:
+    description: SSH user, exported as SSH_USER when set.
+    required: false
+    default: ""
+  ssh-port:
+    description: SSH port, exported as SSH_PORT when set.
+    required: false
+    default: ""
+
+outputs:
+  home:
+    description: Directory of this repository at the pinned revision.
+    value: ${{ steps.paths.outputs.home }}
+  project-directory:
+    description: Absolute project directory.
+    value: ${{ steps.paths.outputs.project-directory }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the repository
+      if: inputs.checkout == 'true'
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        ref: ${{ inputs.ref }}
+        persist-credentials: false
+
+    - name: Point the job at this revision's tooling
+      id: paths
+      shell: bash
+      env:
+        PROJECT_DIRECTORY: ${{ inputs.project-directory }}
+        CONFIG: ${{ inputs.config }}
+      run: sh "$GITHUB_ACTION_PATH/../lib/sh/setup-paths.sh"
+
+    - name: Set up Ruby and the locked Kamal bundle
+      uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+      with:
+        working-directory: ${{ github.action_path }}/..
+        bundler-cache: true
+
+    - name: Load the SSH key
+      if: inputs.ssh-private-key != ''
+      uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+      with:
+        ssh-private-key: ${{ inputs.ssh-private-key }}
+
+    - name: Export variables and secrets
+      shell: bash
+      env:
+        CI_DEPLOY_IN_VARS: ${{ inputs.vars }}
+        CI_DEPLOY_IN_SECRETS: ${{ inputs.secrets }}
+      run: ruby "$CI_DEPLOY_HOME/bin/ci-deploy" export-env
+
+    - name: Export registry and SSH settings
+      shell: bash
+      env:
+        CI_DEPLOY_IN_REGISTRY: ${{ inputs.registry }}
+        CI_DEPLOY_IN_REGISTRY_USER: ${{ inputs.registry-user }}
+        CI_DEPLOY_IN_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
+        CI_DEPLOY_IN_SSH_USER: ${{ inputs.ssh-user }}
+        CI_DEPLOY_IN_SSH_PORT: ${{ inputs.ssh-port }}
+      run: ruby "$CI_DEPLOY_HOME/bin/ci-deploy" kamal-env
+
+    - name: Export Terraform outputs
+      if: inputs.outputs-map != ''
+      shell: bash
+      env:
+        CI_DEPLOY_IN_OUTPUTS_MAP: ${{ inputs.outputs-map }}
+        CI_DEPLOY_IN_TERRAFORM_TOKEN: ${{ inputs.terraform-token }}
+        CI_DEPLOY_IN_TERRAFORM_WORKSPACE: ${{ inputs.terraform-workspace }}
+        CI_DEPLOY_IN_TERRAFORM_ADDRESS: ${{ inputs.terraform-address }}
+      run: ruby "$CI_DEPLOY_HOME/bin/ci-deploy" terraform-outputs
+
+    - name: Copy the Kamal secrets file
+      if: inputs.secrets-file != ''
+      shell: bash
+      env:
+        CI_DEPLOY_IN_SECRETS_FILE: ${{ inputs.secrets-file }}
+      run: ruby "$CI_DEPLOY_HOME/bin/ci-deploy" prepare-secrets

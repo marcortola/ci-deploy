@@ -1,0 +1,142 @@
+name: ci-deploy deploy
+description: >-
+  Builds (or checks) one explicit image version and deploys exactly that version with Kamal, then
+  optionally rolls a failed deploy back, runs a cleanup command and reports the outcome. Cleanup
+  and reporting run after a failure too, and the job still fails with the deploy's own result.
+  Requires the setup action, pinned to the same SHA, earlier in the job.
+
+inputs:
+  destination:
+    description: Kamal destination (-d). Empty deploys a configuration without destinations.
+    required: false
+    default: ""
+  config:
+    description: Kamal configuration file relative to the project directory; empty uses the setup action's.
+    required: false
+    default: ""
+  build-mode:
+    description: >-
+      kamal: `kamal build push` then `kamal deploy --skip-push`, both with one version.
+      prebuilt: deploy an image already in the registry; refuses to start if it is not published.
+    required: false
+    default: kamal
+  version:
+    description: Image version. Empty derives it once from the commit, in Kamal's own format.
+    required: false
+    default: ""
+  rollback:
+    description: >-
+      auto: roll a failed deploy back to the version that was serving, and verify it on every host.
+      off: report only. Keep it off where hooks run migrations older code cannot run against.
+    required: false
+    default: "off"
+  skip-hooks:
+    description: Pass --skip-hooks to kamal deploy. Only for the documented env-file deadlock; never a default.
+    required: false
+    default: "false"
+  before-deploy-command:
+    description: >-
+      Command run in the project directory once the image exists and before kamal deploy (split into
+      words, no shell), even with skip-hooks; for example pausing a service that competes with the
+      rollout. Its failure stops the deploy with result before-deploy-failed.
+    required: false
+    default: ""
+  cleanup-command:
+    description: >-
+      Command run in the project directory after the deploy, whatever its result (split into words,
+      no shell). Its failure only warns.
+    required: false
+    default: ""
+  rollbar-token:
+    description: Rollbar server token. Empty falls back to ROLLBAR_TOKEN, ROLLBAR_SERVER_TOKEN, ROLLBAR_ACCESS_TOKEN or LOG_ROLLBAR_ACCESS_TOKEN in the environment; none skips reporting.
+    required: false
+    default: ""
+  environment-name:
+    description: Environment name reported to Rollbar; empty uses the destination, or production without one.
+    required: false
+    default: ""
+  branch-policy:
+    description: "enforce: the production destination deploys only from the production branch, and that branch only to production. off: no check."
+    required: false
+    default: enforce
+  production-branch:
+    description: Branch paired with the production destination.
+    required: false
+    default: main
+  production-destination:
+    description: Destination treated as production. A configuration without destinations counts as production.
+    required: false
+    default: production
+
+outputs:
+  version:
+    description: The version built and deployed.
+    value: ${{ steps.deploy.outputs.version }}
+  previous-version:
+    description: The version serving before, used as the rollback target; empty when there was none or the build failed.
+    value: ${{ steps.deploy.outputs.previous-version }}
+  deploy-result:
+    description: success, build-failed, image-missing, before-deploy-failed, deploy-failed or refused; empty if the deploy step did not complete.
+    value: ${{ steps.deploy.outputs.deploy-result }}
+  rollback-result:
+    description: not-needed, not-attempted, disabled, no-target, succeeded or failed.
+    value: ${{ steps.deploy.outputs.rollback-result }}
+  image:
+    description: The image reference checked in prebuilt mode.
+    value: ${{ steps.deploy.outputs.image }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Docker Buildx
+      if: inputs.build-mode == 'kamal'
+      uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+    - name: Expose the GitHub runtime for the build cache
+      if: inputs.build-mode == 'kamal'
+      uses: crazy-max/ghaction-github-runtime@04d248b84655b509d8c44dc1d6f990c879747487 # v4.0.0
+
+    # continue-on-error so cleanup and reporting always run; the last step re-raises the result.
+    - name: Build and deploy
+      id: deploy
+      continue-on-error: true
+      shell: bash
+      env:
+        CI_DEPLOY_ACTION_HOME: ${{ github.action_path }}/..
+        CI_DEPLOY_IN_DESTINATION: ${{ inputs.destination }}
+        CI_DEPLOY_IN_CONFIG: ${{ inputs.config }}
+        CI_DEPLOY_IN_BUILD_MODE: ${{ inputs.build-mode }}
+        CI_DEPLOY_IN_VERSION: ${{ inputs.version }}
+        CI_DEPLOY_IN_ROLLBACK: ${{ inputs.rollback }}
+        CI_DEPLOY_IN_SKIP_HOOKS: ${{ inputs.skip-hooks }}
+        CI_DEPLOY_IN_BEFORE_DEPLOY_COMMAND: ${{ inputs.before-deploy-command }}
+        CI_DEPLOY_IN_BRANCH_POLICY: ${{ inputs.branch-policy }}
+        CI_DEPLOY_IN_PRODUCTION_BRANCH: ${{ inputs.production-branch }}
+        CI_DEPLOY_IN_PRODUCTION_DESTINATION: ${{ inputs.production-destination }}
+      run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" deploy
+
+    - name: Clean up after the deploy
+      if: always() && inputs.cleanup-command != ''
+      shell: bash
+      env:
+        CI_DEPLOY_IN_CLEANUP_COMMAND: ${{ inputs.cleanup-command }}
+      run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" cleanup
+
+    - name: Report the deploy outcome
+      if: always()
+      shell: bash
+      env:
+        CI_DEPLOY_IN_DESTINATION: ${{ inputs.destination }}
+        CI_DEPLOY_IN_ENVIRONMENT_NAME: ${{ inputs.environment-name }}
+        CI_DEPLOY_IN_ROLLBAR_TOKEN: ${{ inputs.rollbar-token }}
+        CI_DEPLOY_IN_RESULT: ${{ steps.deploy.outputs.deploy-result }}
+        CI_DEPLOY_IN_ROLLBACK_RESULT: ${{ steps.deploy.outputs.rollback-result }}
+      run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" notify
+
+    - name: Re-raise the deploy result
+      if: always()
+      shell: bash
+      env:
+        CI_DEPLOY_IN_RESULT: ${{ steps.deploy.outputs.deploy-result }}
+        CI_DEPLOY_IN_ROLLBACK_RESULT: ${{ steps.deploy.outputs.rollback-result }}
+      run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" finish

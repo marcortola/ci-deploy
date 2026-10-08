@@ -1,0 +1,6 @@
+#!/bin/sh
+# Unit suite: every test/unit/*_test.rb in one process. Run inside the devShell (nix develop) or
+# with Ruby 3.3 and the bundle installed. Extra arguments go to Minitest (e.g. -n /pattern/).
+set -eu
+cd "$(dirname "$0")/.."
+exec bundle exec ruby -Itest -e 'Dir["test/unit/**/*_test.rb"].sort.each { |f| require File.expand_path(f) }' -- "$@"

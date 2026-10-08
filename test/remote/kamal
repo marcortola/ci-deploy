@@ -1,0 +1,30 @@
+#!/bin/sh
+# Stand-in for Kamal in the remote-consumption workflow: records each call's arguments, one per
+# line between call markers, in $FAKE_KAMAL_LOG, and answers the calls the deploy action makes.
+#   FAKE_KAMAL_FAIL      build or deploy: that call exits 1
+#   FAKE_KAMAL_SERVING   the version `app version` reports before any rollback
+set -eu
+: "${FAKE_KAMAL_LOG:?}"
+state="$FAKE_KAMAL_LOG.serving"
+
+{
+    echo "--- call"
+    for arg in "$@"; do printf '%s\n' "$arg"; done
+} >> "$FAKE_KAMAL_LOG"
+
+case "$1 ${2:-}" in
+    "app version")
+        printf 'App Host: 192.0.2.10\n'
+        if [ -f "$state" ]; then cat "$state"; else printf '%s\n' "${FAKE_KAMAL_SERVING:-}"; fi
+        printf '\n'
+        ;;
+    "build push")
+        [ "${FAKE_KAMAL_FAIL:-}" != build ] || { echo "fake build failure" >&2; exit 1; }
+        ;;
+    "deploy "*)
+        [ "${FAKE_KAMAL_FAIL:-}" != deploy ] || { echo "fake deploy failure" >&2; exit 1; }
+        ;;
+    "rollback "*)
+        printf '%s\n' "$2" > "$state"
+        ;;
+esac

@@ -1,0 +1,29 @@
+# Dependabot reads one directory per entry and does not descend into subdirectories, so every
+# action directory is listed: an action.yml outside this list would keep its pins forever.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /setup
+      - /deploy
+      - /operations
+      - /node
+      - /php
+      - /terraform
+      - /container
+      - /dependabot-merge
+      - /revision-check
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: bundler
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      bundler:
+        patterns: ["*"]

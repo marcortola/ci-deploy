@@ -1,0 +1,5 @@
+# Synthetic outputs map: exported name = Terraform output.
+WEB_SERVER_IPS=web_server_ips
+WORKER_SERVER_IPS=worker_server_ips?
+DATABASE_SERVER_IPS=database_server_ips[0]
+STAGING_SERVER_IPS=staging_server_ips?

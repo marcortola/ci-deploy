@@ -1,0 +1,29 @@
+#!/bin/sh
+#
+# Companion to bin/ci-deploy-reconcile-removed-roles -- runs ON each target host, piped in via
+#   ssh <host> "sh -s <service> <destination> <space-separated desired roles>"
+#
+# Removes every RUNNING container of <service>(+<destination>) whose `role` label
+# is not one of the roles still defined in the Kamal config. The service (and,
+# when set, destination) label filters keep this to THIS app + env: accessories
+# carry their own service label (and no destination/role label), so never match.
+set -eu
+SERVICE="${1:-}"; DEST="${2:-}"; ROLES=" ${3:-} "
+[ -n "$SERVICE" ] || exit 0
+
+# Scope to this app; add the destination filter only when a destination is in play
+# (destination-less deploys don't stamp a `destination` label on their containers).
+if [ -n "$DEST" ]; then
+    live=$(docker ps --filter "label=service=$SERVICE" --filter "label=destination=$DEST" --format '{{.Label "role"}} {{.Names}}' 2>/dev/null || true)
+else
+    live=$(docker ps --filter "label=service=$SERVICE" --format '{{.Label "role"}} {{.Names}}' 2>/dev/null || true)
+fi
+[ -n "$live" ] || { echo "  no $SERVICE containers on this host"; exit 0; }
+
+printf '%s\n' "$live" | while read -r role name; do
+    [ -n "$role" ] && [ -n "$name" ] || continue
+    case "$ROLES" in *" $role "*) continue ;; esac   # role still in config -> keep
+    echo "  removing orphaned role '$role' -> $name"
+    docker stop -t 30 "$name" >/dev/null 2>&1 || true
+    docker rm -f "$name" >/dev/null 2>&1 || true
+done

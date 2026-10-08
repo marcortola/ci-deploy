@@ -1,0 +1,74 @@
+name: ci-deploy php
+description: Sets up PHP and Composer with the Composer download cache, validates the manifest and installs the locked dependencies.
+
+inputs:
+  php-version:
+    description: PHP version.
+    required: true
+  extensions:
+    description: Comma-separated PHP extensions.
+    required: false
+    default: ""
+  tools:
+    description: Tools for shivammathur/setup-php.
+    required: false
+    default: composer:v2
+  coverage:
+    description: Coverage driver (none, xdebug, pcov).
+    required: false
+    default: none
+  working-directory:
+    description: Directory holding composer.json and composer.lock.
+    required: false
+    default: "."
+  validate:
+    description: Run composer validate --no-check-publish ('true' or 'false').
+    required: false
+    default: "true"
+  install:
+    description: Run composer install ('true' or 'false').
+    required: false
+    default: "true"
+  install-args:
+    description: Extra composer install arguments, separated by spaces.
+    required: false
+    default: "--no-interaction --no-progress"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up PHP
+      uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+      with:
+        php-version: ${{ inputs.php-version }}
+        extensions: ${{ inputs.extensions }}
+        tools: ${{ inputs.tools }}
+        coverage: ${{ inputs.coverage }}
+
+    - name: Locate the Composer download cache
+      id: composer-cache
+      shell: bash
+      run: echo "dir=$(composer config --global cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Composer downloads
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-composer-v2-${{ hashFiles(format('{0}/composer.lock', inputs.working-directory)) }}
+        restore-keys: ${{ runner.os }}-composer-v2-
+
+    - name: Validate the Composer manifest and lockfile
+      if: inputs.validate == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: composer validate --no-check-publish
+
+    - name: Install the locked dependencies
+      if: inputs.install == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      run: |
+        read -r -a args <<< "$INSTALL_ARGS"
+        composer install "${args[@]}"

@@ -1,0 +1,42 @@
+# Synthetic consumer configuration: every value is an example. Hosts come from Terraform outputs
+# the setup action exports (see outputs.map), read with CiDeploy::Hosts so one host and several
+# hosts look the same.
+<% require "ci_deploy/hosts" %>
+<% workers = CiDeploy::Hosts.list("WORKER_SERVER_IPS", required: false) %>
+service: example-app
+image: example/app
+
+servers:
+  web:
+    hosts: <%= CiDeploy::Hosts.list("WEB_SERVER_IPS").to_json %>
+<% if workers.any? %>
+  worker:
+    hosts: <%= workers.to_json %>
+    cmd: bin/worker
+<% end %>
+
+accessories:
+  db:
+    image: postgres:16
+    host: <%= CiDeploy::Hosts.first("DATABASE_SERVER_IPS") %>
+    port: "127.0.0.1:5432:5432"
+
+proxy:
+  host: app.example.com
+  app_port: 3000
+
+registry:
+  server: registry.example.com
+  username: example-user
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+ssh:
+  user: <%= ENV.fetch("SSH_USER", "deploy") %>
+
+builder:
+  arch: amd64
+
+env:
+  clear:
+    DEPLOY_ENV: <%= ENV.fetch("DEPLOY_ENV", "production") %>

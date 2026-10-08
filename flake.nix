@@ -16,15 +16,15 @@
         default = pkgs.mkShell {
           packages = [
             pkgs.ruby_3_3
+            # Ruby 3.3's default Bundler is older than its RubyGems and warns on every load;
+            # this one matches the version Gemfile.lock is bundled with.
+            (pkgs.bundler.override { ruby = pkgs.ruby_3_3; })
             pkgs.git
             pkgs.openssh
             pkgs.jq
             pkgs.shellcheck
             pkgs.actionlint
           ];
-          shellHook = ''
-            export BUNDLE_GEMFILE="$PWD/Gemfile"
-          '';
         };
       });
     };

@@ -1,0 +1,19 @@
+#!/bin/sh
+# ShellCheck on every shell script and actionlint on every workflow and action.
+set -eu
+cd "$(dirname "$0")/.."
+
+shellcheck -x \
+    bin/kamal bin/ci-deploy-host-control bin/ci-deploy-reconcile-removed-roles \
+    launcher/ci-deploy-local \
+    lib/sh/*.sh lib/sh/reconcile-removed-roles.remote \
+    script/test script/lint script/integration \
+    test/fixtures/hooks/*/* \
+    test/integration/*.sh test/integration/host/entrypoint.sh \
+    test/integration/apps/*/.kamal/hooks/* \
+    test/remote/kamal test/remote/assert.sh
+
+actionlint
+# actionlint checks workflows; composite actions are checked through the workflows that use them
+# and by test/unit/actions_test.rb.
+echo "lint: ok"

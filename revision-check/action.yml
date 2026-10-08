@@ -1,0 +1,56 @@
+name: ci-deploy revision-check
+description: >-
+  Fails unless the component references marcortola/ci-deploy only from top-level workflows, all
+  pinned to one full commit SHA with agreeing release comments, the vendored local launcher (when
+  given) is identical to the one at that SHA, and this check itself runs at that SHA.
+
+inputs:
+  component:
+    description: Component directory, relative to the workspace.
+    required: false
+    default: "."
+  workflows:
+    description: Workflows directory, relative to the component.
+    required: false
+    default: .github/workflows
+  launcher:
+    description: Vendored local launcher, relative to the component; empty skips the comparison.
+    required: false
+    default: ""
+  own-ref:
+    description: >-
+      Revision this check must match. Empty derives it from where the runner fetched this action
+      (_actions/marcortola/ci-deploy/<ref>), so the check verifies its own pin.
+    required: false
+    default: ""
+  setup-ruby:
+    description: Install Ruby 3.3 first ('false' uses the Ruby already on PATH, 3.0 or later).
+    required: false
+    default: "true"
+
+outputs:
+  sha:
+    description: The single pinned revision.
+    value: ${{ steps.check.outputs.sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Ruby
+      if: inputs.setup-ruby == 'true'
+      uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+      with:
+        ruby-version: "3.3"
+
+    - id: check
+      name: Check the ci-deploy revision
+      shell: bash
+      env:
+        CI_DEPLOY_IN_COMPONENT: ${{ inputs.component }}
+        CI_DEPLOY_IN_WORKFLOWS: ${{ inputs.workflows }}
+        CI_DEPLOY_IN_LAUNCHER: ${{ inputs.launcher }}
+        CI_DEPLOY_IN_OWN_REF: ${{ inputs.own-ref }}
+        CI_DEPLOY_ACTION_HOME: ${{ github.action_path }}/..
+      run: |
+        cd "$GITHUB_WORKSPACE"
+        ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" revision-check

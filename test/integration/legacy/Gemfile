@@ -1,0 +1,4 @@
+# The Kamal release that boots kamal-proxy v0.8.1, to stand up the "before" state of a proxy upgrade.
+source "https://rubygems.org"
+
+gem "kamal", "2.2.2"

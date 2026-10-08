@@ -1,0 +1,88 @@
+name: ci-deploy operations
+description: >-
+  Runs one operation from the common catalog, or free Kamal arguments, against a configuration.
+  Inputs are validated and passed to Kamal as an argument vector; nothing is evaluated by a shell
+  on the runner. Requires the setup action, pinned to the same SHA, earlier in the job.
+
+inputs:
+  operation:
+    description: >-
+      accessory-boot, accessory-reboot, accessory-start, accessory-stop, accessory-restart,
+      accessory-details, host-exec, app-exec, console, logs, proxy-details, proxy-restart,
+      proxy-reboot, or kamal (free arguments).
+    required: true
+  target:
+    description: Accessory name or 'all' (accessory-*); app, proxy or an accessory name (logs).
+    required: false
+    default: ""
+  command:
+    description: Command for host-exec, app-exec and console (console prefixes the stack's runner).
+    required: false
+    default: ""
+  args:
+    description: Free Kamal arguments for the kamal operation, split into words like a shell would but never evaluated.
+    required: false
+    default: ""
+  roles:
+    description: Comma-separated role filter.
+    required: false
+    default: ""
+  hosts:
+    description: Comma-separated host filter. proxy-restart and proxy-reboot require it, or the literal 'all'.
+    required: false
+    default: ""
+  server:
+    description: primary or all, for host-exec, app-exec and console.
+    required: false
+    default: primary
+  container-mode:
+    description: new-image (disposable container from the deployed image) or live-container (--reuse); required for app-exec and console.
+    required: false
+    default: ""
+  stack:
+    description: none, symfony (bin/console), node (node) or python (python).
+    required: false
+    default: none
+  lines:
+    description: Number of log lines.
+    required: false
+    default: ""
+  since:
+    description: Log time filter, such as 5m or 1h.
+    required: false
+    default: ""
+  grep:
+    description: Log pattern filter.
+    required: false
+    default: ""
+  destination:
+    description: Kamal destination (-d); empty for a configuration without destinations.
+    required: false
+    default: ""
+  config:
+    description: Kamal configuration file relative to the project directory; empty uses the setup action's.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Run the operation
+      shell: bash
+      env:
+        CI_DEPLOY_ACTION_HOME: ${{ github.action_path }}/..
+        CI_DEPLOY_IN_OPERATION: ${{ inputs.operation }}
+        CI_DEPLOY_IN_TARGET: ${{ inputs.target }}
+        CI_DEPLOY_IN_COMMAND: ${{ inputs.command }}
+        CI_DEPLOY_IN_ARGS: ${{ inputs.args }}
+        CI_DEPLOY_IN_ROLES: ${{ inputs.roles }}
+        CI_DEPLOY_IN_HOSTS: ${{ inputs.hosts }}
+        CI_DEPLOY_IN_SERVER: ${{ inputs.server }}
+        CI_DEPLOY_IN_CONTAINER_MODE: ${{ inputs.container-mode }}
+        CI_DEPLOY_IN_STACK: ${{ inputs.stack }}
+        CI_DEPLOY_IN_LINES: ${{ inputs.lines }}
+        CI_DEPLOY_IN_SINCE: ${{ inputs.since }}
+        CI_DEPLOY_IN_GREP: ${{ inputs.grep }}
+        CI_DEPLOY_IN_DESTINATION: ${{ inputs.destination }}
+        CI_DEPLOY_IN_CONFIG: ${{ inputs.config }}
+      run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" operation

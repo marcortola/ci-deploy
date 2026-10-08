@@ -1,0 +1,136 @@
+name: Remote consumption
+
+# Runs the published actions the way a consumer does: fetched from GitHub by full commit SHA, not
+# from this checkout. The pin is the newest commit that changed an action or its scripts; bump it
+# in the same pull request whenever one does (the release procedure in docs/releasing.md).
+# Kamal is replaced by test/remote/kamal, which records its calls, so the scenarios check the
+# action wiring: one version, outputs, rollback, cleanup and reporting after a failure, and the
+# re-raised result.
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remote-consumer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy (${{ matrix.scenario }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - scenario: success
+            fail: ""
+          - scenario: deploy-failure
+            fail: deploy
+          - scenario: build-failure
+            fail: build
+    steps:
+      - uses: marcortola/ci-deploy/setup@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        with:
+          project-directory: test/fixtures/consumer
+          vars: '{"WEB_SERVER_IPS":"192.0.2.10,192.0.2.11","DATABASE_SERVER_IPS":"192.0.2.30"}'
+          secrets: '{"REGISTRY_PASSWORD":"first line\nsecond line"}'
+
+      - name: Render the configuration with the locked Kamal
+        working-directory: test/fixtures/consumer
+        run: |
+          kamal version | tee "$RUNNER_TEMP/kamal-version"
+          grep -qx '2.10.0' "$RUNNER_TEMP/kamal-version"
+          kamal config -c etc/kamal/deploy.yml > "$RUNNER_TEMP/config.yml"
+          grep -q '192.0.2.11' "$RUNNER_TEMP/config.yml"
+          test "$(printf '%s' "$REGISTRY_PASSWORD" | wc -l)" -eq 1
+
+      - name: Put the recording Kamal first on PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
+          echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
+
+      - uses: marcortola/ci-deploy/deploy@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        id: deploy
+        continue-on-error: true
+        env:
+          FAKE_KAMAL_FAIL: ${{ matrix.fail }}
+          FAKE_KAMAL_SERVING: v0-serving
+        with:
+          destination: staging
+          rollback: auto
+          cleanup-command: kamal cleanup-marker
+
+      - name: Check the outcome
+        env:
+          SCENARIO: ${{ matrix.scenario }}
+          OUTCOME: ${{ steps.deploy.outcome }}
+          VERSION: ${{ steps.deploy.outputs.version }}
+          PREVIOUS_VERSION: ${{ steps.deploy.outputs.previous-version }}
+          DEPLOY_RESULT: ${{ steps.deploy.outputs.deploy-result }}
+          ROLLBACK_RESULT: ${{ steps.deploy.outputs.rollback-result }}
+          EXPECTED_VERSION: ${{ github.sha }}
+        run: |
+          cat "$FAKE_KAMAL_LOG"
+          sh test/remote/assert.sh
+
+  operations:
+    name: Operations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: marcortola/ci-deploy/setup@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        with:
+          project-directory: test/fixtures/consumer
+          vars: '{"WEB_SERVER_IPS":"192.0.2.10","DATABASE_SERVER_IPS":"192.0.2.30"}'
+
+      - name: Put the recording Kamal first on PATH
+        run: |
+          echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
+          echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
+
+      - uses: marcortola/ci-deploy/operations@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        with:
+          operation: kamal
+          args: app exec --reuse "echo 'semi;colon' $(id -u) | wc -c"
+          destination: staging
+
+      - uses: marcortola/ci-deploy/operations@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        id: untargeted
+        continue-on-error: true
+        with:
+          operation: proxy-reboot
+          destination: staging
+
+      - uses: marcortola/ci-deploy/operations@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        with:
+          operation: proxy-reboot
+          hosts: 192.0.2.10
+          destination: staging
+
+      - name: Check the recorded calls
+        env:
+          UNTARGETED: ${{ steps.untargeted.outcome }}
+        run: |
+          cat "$FAKE_KAMAL_LOG"
+          calls=$(awk '/^--- call$/ { if (n) print line; line = ""; n = 1; next } { line = line == "" ? $0 : line "|" $0 } END { if (n) print line }' "$FAKE_KAMAL_LOG")
+          printf '%s\n' "$calls" | grep -Fxq "app|exec|--reuse|echo 'semi;colon' \$(id -u) | wc -c|-c|etc/kamal/deploy.yml|-d|staging"
+          test "$UNTARGETED" = failure
+          test "$(printf '%s\n' "$calls" | grep -c '^proxy|reboot')" -eq 1
+          printf '%s\n' "$calls" | grep -Fxq "proxy|reboot|-y|--hosts=192.0.2.10|-c|etc/kamal/deploy.yml|-d|staging"
+
+  revision-check:
+    name: Revision check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: marcortola/ci-deploy/revision-check@d56242f5c27862d74d436cdc667de3401ecdb23f # feat/initial-components
+        with:
+          launcher: launcher/ci-deploy-local

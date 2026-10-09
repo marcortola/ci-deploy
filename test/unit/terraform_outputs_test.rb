@@ -99,6 +99,25 @@ class TerraformOutputsTest < Minitest::Test
     assert_includes error.message, "workspace id"
   end
 
+  # HCP Terraform has answered 404 for existing workspaces during an outage, so a 404 is retried
+  # like a server error and the final error names both causes.
+  def test_not_found_is_retried_and_the_final_error_names_a_wrong_workspace_or_an_outage
+    error = assert_raises(CiDeploy::TerraformOutputs::Error) { resolver([404, "{}"]).resolve(map("WEB=web")) }
+    assert_includes error.message, "HTTP 404"
+    assert_includes error.message, "workspace id"
+    assert_includes error.message, "token"
+    assert_includes error.message, "outage"
+    assert_equal 3, @requests.size
+    assert_equal [1, 2], @sleeps
+  end
+
+  def test_a_transient_not_found_recovers_on_a_later_attempt
+    values, = resolver([404, "{}"], [200, state("web" => [["192.0.2.10"]])]).resolve(map("WEB=web"))
+    assert_equal({ "WEB" => "192.0.2.10" }, values)
+    assert_equal 2, @requests.size
+    assert_equal [1], @sleeps
+  end
+
   def test_server_errors_and_network_failures_are_retried
     values, = resolver([502, ""], Errno::ECONNRESET.new, [200, state("web" => [["192.0.2.10"]])]).resolve(map("WEB=web"))
     assert_equal({ "WEB" => "192.0.2.10" }, values)

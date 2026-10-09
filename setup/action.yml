@@ -6,7 +6,9 @@ description: >-
   For the rest of the job it sets up Ruby 3.3, puts this revision's bin/ first on PATH and exports
   BUNDLE_GEMFILE (this revision's Gemfile), RUBYLIB (its lib/), CI_DEPLOY_HOME,
   CI_DEPLOY_HOOKS_LIB, CI_DEPLOY_PROJECT_DIR and CI_DEPLOY_CONFIG: later steps that run Ruby or
-  Bundler for the component's own purposes must set their own BUNDLE_GEMFILE.
+  Bundler for the component's own purposes must set their own BUNDLE_GEMFILE. Given the deploy's
+  destination (report-destination), a failure of any of its steps is reported to Rollbar as a
+  failed deploy.
 
 inputs:
   checkout:
@@ -73,6 +75,29 @@ inputs:
     default: ""
   ssh-port:
     description: SSH port, exported as SSH_PORT when set.
+    required: false
+    default: ""
+  report-destination:
+    description: >-
+      The destination the job deploys: pass the deploy action's destination. When a setup step
+      fails, GitHub skips the deploy action and its Rollbar reporting, so setup then reports a
+      failed deploy (result setup-failed) and raises the critical item itself. Empty, with
+      report-environment-name also empty, reports nothing: leave both empty in operations jobs and
+      configuration checks.
+    required: false
+    default: ""
+  report-environment-name:
+    description: >-
+      Environment a setup failure is reported under; empty uses report-destination. Pass the deploy
+      action's environment-name when it sets one, or production for a configuration without
+      destinations.
+    required: false
+    default: ""
+  rollbar-token:
+    description: >-
+      Rollbar server token for a setup failure report. Empty falls back to ROLLBAR_TOKEN,
+      ROLLBAR_SERVER_TOKEN, ROLLBAR_ACCESS_TOKEN or LOG_ROLLBAR_ACCESS_TOKEN in the secrets input,
+      then in the environment; none skips reporting.
     required: false
     default: ""
 
@@ -146,3 +171,17 @@ runs:
       env:
         CI_DEPLOY_IN_SECRETS_FILE: ${{ inputs.secrets-file }}
       run: ruby "$CI_DEPLOY_HOME/bin/ci-deploy" prepare-secrets
+
+    # Last, and only after a failed step of this action: the deploy action and its reporting are
+    # skipped then. Standard library only, so it runs on the runner's own Ruby when Ruby setup
+    # failed; continue-on-error keeps a reporting problem from adding a failure of its own.
+    - name: Report a setup failure
+      if: failure() && (inputs.report-destination != '' || inputs.report-environment-name != '')
+      continue-on-error: true
+      shell: bash
+      env:
+        CI_DEPLOY_IN_REPORT_DESTINATION: ${{ inputs.report-destination }}
+        CI_DEPLOY_IN_REPORT_ENVIRONMENT_NAME: ${{ inputs.report-environment-name }}
+        CI_DEPLOY_IN_ROLLBAR_TOKEN: ${{ inputs.rollbar-token }}
+        CI_DEPLOY_IN_SECRETS: ${{ inputs.secrets }}
+      run: ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" report-setup-failure

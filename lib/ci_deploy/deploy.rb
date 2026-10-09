@@ -83,6 +83,7 @@ module CiDeploy
       deploy_args = ["deploy", "--skip-push", "--version=#{version}"]
       deploy_args << "--skip-hooks" if @skip_hooks
       @github.warning("Deploying with --skip-hooks: the pre-deploy and post-deploy hooks will not run.") if @skip_hooks
+      @deploy_started = true
       deploy = @kamal.run(*deploy_args)
       if deploy.success?
         outcome.rollback_result = "not-needed"
@@ -92,6 +93,10 @@ module CiDeploy
       outcome.rollback_result = roll_back(previous)
       finish(outcome, "deploy-failed", "kamal deploy exited with status #{deploy.status}.")
     end
+
+    # Whether kamal deploy has started, so hosts may have changed. An error escaping before then
+    # attempted no rollback; after it, the rollback state is unknown.
+    def deploy_started? = @deploy_started == true
 
     private
 

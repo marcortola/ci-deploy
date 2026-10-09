@@ -36,4 +36,5 @@ The deploy action's `rollback-result` output says what happened:
 | `failed` | the rollback did not complete or could not be confirmed | the failed version may be serving: run `kamal rollback <previous-version>` (the `previous-version` output) through the `kamal` operation, then check `kamal app version` |
 | `disabled` | the policy is `off` | decide between fixing forward and a manual rollback; migrations may make older code unsafe |
 | `no-target` | nothing was serving, or only the same or a `_replaced_` version | fix forward |
-| `not-attempted` | the build failed, the image was missing or the before-deploy command failed | no host changed (apart from the before-deploy command's own effect) |
+| `not-attempted` | the build failed, the image was missing, the before-deploy command failed, or the step failed (`deploy-result` `error`) before `kamal deploy` ran | no host changed (apart from the before-deploy command's own effect) |
+| `unknown` | the step failed unexpectedly (`deploy-result` `error`) after `kamal deploy` started, during the deploy or the rollback | treat as `failed`: check `kamal app version` and roll back by hand to the `previous-version` output if the failed version is serving |

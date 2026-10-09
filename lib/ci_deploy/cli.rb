@@ -34,18 +34,25 @@ module CiDeploy
         "deploy" => :deploy,
         "cleanup" => :cleanup,
         "notify" => :notify,
+        "report-setup-failure" => :report_setup_failure,
         "finish" => :finish,
         "operation" => :operation,
         "revision-check" => :revision_check
       }[command]
       unless handler
-        @out.puts "usage: ci-deploy <#{%w[export-env terraform-outputs prepare-secrets kamal-env deploy cleanup notify finish operation revision-check].join('|')}>"
+        @out.puts "usage: ci-deploy <#{%w[export-env terraform-outputs prepare-secrets kamal-env deploy cleanup notify report-setup-failure finish operation revision-check].join('|')}>"
         return 2
       end
 
       send(handler) || 0
     rescue ArgumentError, TerraformOutputs::Error, Metadata::PolicyViolation, Kamal::Error => e
       @github.error(e.message)
+      1
+    # Anything else is a bug or an environment problem, not a crash: the step still fails with an
+    # annotation and status 1, and the backtrace goes to the log for diagnosis.
+    rescue StandardError => e
+      @github.error("Unexpected #{e.class}: #{e.message}")
+      @out.puts(e.backtrace) if e.backtrace
       1
     end
 
@@ -134,8 +141,8 @@ module CiDeploy
     end
 
     # Any failure before Deploy reports its own result (a refused policy, an invalid input, a
-    # project that is not a git checkout, `kamal config` failing) still sets deploy-result, so the
-    # report says what happened instead of "cancelled or interrupted".
+    # project that is not a git checkout, `kamal config` failing, any unexpected error) still sets
+    # deploy-result, so the report says what happened instead of "cancelled or interrupted".
     def deploy
       ensure_same_revision!
       policy = input("BRANCH_POLICY", "enforce")
@@ -156,27 +163,36 @@ module CiDeploy
       rollback = input("ROLLBACK")
       raise ArgumentError, "the rollback input is required: auto or off" if rollback.empty?
 
-      outcome = Deploy.new(kamal: kamal, runner: runner, github: @github, mode: input("BUILD_MODE", "kamal"),
-                           version: input("VERSION"), rollback: rollback,
-                           skip_hooks: input("SKIP_HOOKS", "false") == "true", before_deploy: before_deploy_command,
-                           command_env: command_env).call
+      deployer = Deploy.new(kamal: kamal, runner: runner, github: @github, mode: input("BUILD_MODE", "kamal"),
+                            version: input("VERSION"), rollback: rollback,
+                            skip_hooks: input("SKIP_HOOKS", "false") == "true", before_deploy: before_deploy_command,
+                            command_env: command_env)
+      outcome = deployer.call
       @out.puts "Deploy result: #{outcome.deploy_result}; rollback: #{outcome.rollback_result}"
       outcome.success? ? 0 : 1
-    rescue ArgumentError, Kamal::Error => e
+    rescue Metadata::PolicyViolation
+      raise
+    # Once kamal deploy has run, the error may have come mid-deploy or mid-rollback: no host state
+    # can be claimed, so the rollback result is unknown rather than not-attempted.
+    rescue StandardError => e
       @github.set_output("deploy-result", "error")
-      @github.set_output("rollback-result", "not-attempted")
+      @github.set_output("rollback-result", deployer&.deploy_started? ? "unknown" : "not-attempted")
       raise e
     end
 
     # The branch policy checks GITHUB_REF_NAME and GITHUB_SHA; the code deployed is the checkout's
     # HEAD. Under `enforce` they must be the same commit, or a policy-checked run could deploy
-    # other code.
+    # other code. A checkout whose commit cannot be read is refused too: the check fails closed.
     def ensure_checkout_is_the_workflow_commit!
       expected = @env.fetch("GITHUB_SHA", "")
       return if expected.empty?
 
       head = runner.run("git", "rev-parse", "HEAD", echo: false, quiet: true)
-      return unless head.success?
+      unless head.success?
+        raise Metadata::PolicyViolation,
+              "Could not read the checkout's commit (git rev-parse HEAD exited with status #{head.status}), so it cannot be checked against the workflow's commit #{expected}; " \
+              "with branch-policy enforce the deploy is refused. Check out the repository (the setup action's checkout input) or set branch-policy to off."
+      end
       return if head.output.strip == expected
 
       raise Metadata::PolicyViolation,
@@ -219,17 +235,39 @@ module CiDeploy
     def notify
       destination = input("DESTINATION")
       environment = input("ENVIRONMENT_NAME", destination.empty? ? "production" : destination)
-      Notify.new(github: @github, env: @env).call(
-        explicit_token: input("ROLLBAR_TOKEN"), environment: environment,
-        deploy_result: input("RESULT"), rollback_result: input("ROLLBACK_RESULT"),
-        repository: @env.fetch("GITHUB_REPOSITORY", ""), revision: @env.fetch("GITHUB_SHA", ""),
-        actor: @env.fetch("GITHUB_ACTOR", ""),
-        run_url: "#{@env.fetch('GITHUB_SERVER_URL', 'https://github.com')}/#{@env.fetch('GITHUB_REPOSITORY', '')}/actions/runs/#{@env.fetch('GITHUB_RUN_ID', '')}"
-      )
+      report(environment: environment, deploy_result: input("RESULT"), rollback_result: input("ROLLBACK_RESULT"))
       0
     rescue StandardError => e
       @github.warning("Deploy reporting failed (#{e.class}); the deploy result is unchanged.")
       0
+    end
+
+    # The setup action's last step, run only after one of its steps failed: GitHub then skips the
+    # deploy action and its reporting, so setup reports the failed deploy itself. Silent unless the
+    # setup action was told what it deploys (report-destination or report-environment-name), so
+    # operations jobs and configuration checks never report. The token comes from the explicit
+    # input, the secrets JSON (the failure may precede their export) or the environment. Setup has
+    # failed already, so this never fails, and never prints the token.
+    def report_setup_failure
+      destination = input("REPORT_DESTINATION")
+      environment = input("REPORT_ENVIRONMENT_NAME", destination)
+      return 0 if environment.empty?
+
+      report(environment: environment, deploy_result: "setup-failed", rollback_result: "not-attempted", secrets_json: input("SECRETS"))
+      0
+    rescue StandardError => e
+      @github.warning("Setup failure reporting failed (#{e.class}); the setup failure above is unchanged.")
+      0
+    end
+
+    def report(environment:, deploy_result:, rollback_result:, secrets_json: "")
+      Notify.new(github: @github, env: @env).call(
+        explicit_token: input("ROLLBAR_TOKEN"), secrets_json: secrets_json, environment: environment,
+        deploy_result: deploy_result, rollback_result: rollback_result,
+        repository: @env.fetch("GITHUB_REPOSITORY", ""), revision: @env.fetch("GITHUB_SHA", ""),
+        actor: @env.fetch("GITHUB_ACTOR", ""),
+        run_url: "#{@env.fetch('GITHUB_SERVER_URL', 'https://github.com')}/#{@env.fetch('GITHUB_REPOSITORY', '')}/actions/runs/#{@env.fetch('GITHUB_RUN_ID', '')}"
+      )
     end
 
     # Restores the deploy's own result after the steps that always run.
@@ -238,6 +276,8 @@ module CiDeploy
       rollback = input("ROLLBACK_RESULT")
       if rollback == "failed"
         @github.error("The rollback did not complete. The failed version may still be serving - intervene manually.")
+      elsif rollback == "unknown"
+        @github.error("The deploy step failed unexpectedly after kamal deploy started, so neither the version serving nor the rollback is known. The failed version may be serving - intervene manually.")
       end
       return 0 if result == "success"
 

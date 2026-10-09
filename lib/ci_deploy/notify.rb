@@ -18,6 +18,11 @@ module CiDeploy
   class Notify
     TOKEN_VARIABLES = %w[ROLLBAR_TOKEN ROLLBAR_SERVER_TOKEN ROLLBAR_ACCESS_TOKEN LOG_ROLLBAR_ACCESS_TOKEN].freeze
     DEFAULT_ENDPOINT = "https://api.rollbar.com"
+    # What a failed result means for the hosts, in the critical item's body.
+    CONSEQUENCES = {
+      "setup-failed" => "The setup action failed before the deploy started, so nothing was deployed and the previous version is still serving."
+    }.freeze
+    DEFAULT_CONSEQUENCE = "The previous version may still be serving, or a post-deploy step may have failed after the new one went live."
 
     def initialize(github:, env: ENV, http: nil)
       @github = github
@@ -26,17 +31,21 @@ module CiDeploy
     end
 
     # The token is the explicit input when given, otherwise the first of the names consumers have
-    # historically stored it under, exported to the environment by the setup action.
-    def token(explicit)
+    # historically stored it under, exported to the environment by the setup action. A setup
+    # failure can come before that export, so the setup action passes its secrets JSON too: read
+    # over the environment, as the export would have written it.
+    def token(explicit, secrets_json: "")
       return explicit.to_s unless explicit.to_s.empty?
 
-      TOKEN_VARIABLES.map { |name| @env[name].to_s }.find { |value| !value.empty? }.to_s
+      secrets = parse_secrets(secrets_json)
+      TOKEN_VARIABLES.map { |name| secrets.fetch(name, @env[name]).to_s }.find { |value| !value.empty? }.to_s
     end
 
-    def call(explicit_token:, environment:, deploy_result:, rollback_result:, repository:, revision:, actor:, run_url:)
-      token = token(explicit_token)
+    def call(explicit_token:, environment:, deploy_result:, rollback_result:, repository:, revision:, actor:, run_url:, secrets_json: "")
+      token = token(explicit_token, secrets_json: secrets_json)
       if token.empty?
-        @github.notice("No Rollbar token configured; skipping deploy reporting.")
+        subject = deploy_result == "setup-failed" ? "the setup failure" : "the deploy outcome"
+        @github.notice("No Rollbar token configured; #{subject} is not reported to Rollbar.")
         return :skipped
       end
 
@@ -55,7 +64,7 @@ module CiDeploy
       return :reported if success
 
       body = "Deploy failed (#{deploy_result.to_s.empty? ? 'cancelled or interrupted' : deploy_result}, rollback: #{rollback_result.to_s.empty? ? 'unknown' : rollback_result}): " \
-             "#{repository} to #{environment}. The previous version may still be serving, or a post-deploy step may have failed after the new one went live. Run: #{run_url}"
+             "#{repository} to #{environment}. #{CONSEQUENCES.fetch(deploy_result.to_s, DEFAULT_CONSEQUENCE)} Run: #{run_url}"
       item_payload = {
         access_token: token,
         data: {
@@ -71,6 +80,19 @@ module CiDeploy
     end
 
     private
+
+    # Only string values under the token names count; JSON that does not parse (possibly why setup
+    # failed) reads as no secrets, never as an error.
+    def parse_secrets(json)
+      return {} if json.to_s.strip.empty?
+
+      data = JSON.parse(json)
+      return {} unless data.is_a?(Hash)
+
+      data.slice(*TOKEN_VARIABLES).select { |_name, value| value.is_a?(String) && !value.empty? }
+    rescue JSON::ParserError
+      {}
+    end
 
     def send_request(path, payload, headers, label)
       endpoint = @env.fetch("CI_DEPLOY_ROLLBAR_ENDPOINT", "").then { |value| value.empty? ? DEFAULT_ENDPOINT : value }

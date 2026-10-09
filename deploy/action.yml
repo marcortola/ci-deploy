@@ -60,7 +60,10 @@ inputs:
     required: false
     default: ""
   branch-policy:
-    description: "enforce: the production destination deploys only from the production branch, and that branch only to production. off: no check."
+    description: >-
+      enforce: the production destination deploys only from the production branch, and that branch
+      only to production; the checkout must be the workflow's commit, and a checkout whose commit
+      git cannot read is refused. off: no check.
     required: false
     default: enforce
   production-branch:
@@ -80,10 +83,14 @@ outputs:
     description: The version serving before, used as the rollback target; empty when there was none or the build failed.
     value: ${{ steps.deploy.outputs.previous-version }}
   deploy-result:
-    description: success, build-failed, image-missing, before-deploy-failed, deploy-failed or refused; empty if the deploy step did not complete.
+    description: >-
+      success, build-failed, image-missing, before-deploy-failed, deploy-failed, refused or error (an
+      invalid input or an unexpected failure of the step); empty if the deploy step did not complete.
     value: ${{ steps.deploy.outputs.deploy-result }}
   rollback-result:
-    description: not-needed, not-attempted, disabled, no-target, succeeded or failed.
+    description: >-
+      not-needed, not-attempted, disabled, no-target, succeeded, failed, or unknown (the step failed
+      unexpectedly after kamal deploy started: intervene as for failed).
     value: ${{ steps.deploy.outputs.rollback-result }}
   image:
     description: The image reference checked in prebuilt mode.

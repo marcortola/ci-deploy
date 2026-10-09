@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "../test_helper"
+require "socket"
 
 # The steps of the deploy action, run as the action runs them: separate processes sharing only
 # the GitHub files and the environment.
@@ -131,6 +132,15 @@ class CliTest < Minitest::Test
     assert status.success?, "branch-policy off deploys the checkout as it is"
   end
 
+  def test_enforce_refuses_when_the_checkout_commit_cannot_be_read
+    @stubs.add("git", "echo 'fatal: not a git repository' >&2; exit 128")
+    output, status = step("deploy")
+    refute status.success?
+    assert_includes output, "::error::Could not read the checkout's commit (git rev-parse HEAD exited with status 128)"
+    assert_equal({ "deploy-result" => "refused", "rollback-result" => "not-attempted" }, @gh.outputs)
+    assert_empty @stubs.calls_to("kamal")
+  end
+
   def test_branch_policy_off_and_custom_production_names
     _output, status = step("deploy", { destination: "staging", branch_policy: "off" })
     assert status.success?
@@ -248,6 +258,52 @@ class CliTest < Minitest::Test
     assert_empty @stubs.calls_to("kamal")
   end
 
+  # An error outside the expected classes (here Errno::ENOENT from a missing action path) still
+  # sets the error result, fails the step with an annotation and runs nothing.
+  def test_an_unexpected_error_in_the_deploy_step_reports_error
+    output, status = step("deploy", {}, "CI_DEPLOY_ACTION_HOME" => File.join(tmpdir, "missing"))
+    assert_equal 1, status.exitstatus
+    assert_includes output, "::error::Unexpected Errno::ENOENT"
+    assert_equal({ "deploy-result" => "error", "rollback-result" => "not-attempted" }, @gh.outputs)
+    assert_empty @stubs.calls_to("kamal")
+  end
+
+  # Once kamal deploy has run, an unexpected error cannot say whether a host changed or the
+  # rollback completed: the rollback result is unknown, never not-attempted.
+  def test_an_unexpected_error_after_kamal_deploy_ran_reports_an_unknown_rollback
+    kamal(build: 0, deploy: 1)
+    fault = File.join(tmpdir, "fault.rb")
+    File.write(fault, <<~RUBY)
+      $LOAD_PATH.unshift #{File.join(ROOT, 'lib').inspect}
+      require "ci_deploy/cli"
+      CiDeploy::Rollback.prepend(Module.new { def call(*) = raise(IOError, "connection lost during the rollback") })
+    RUBY
+    output, status = step("deploy", { rollback: "auto" }, "RUBYOPT" => "-r#{fault}")
+    assert_equal 1, status.exitstatus
+    assert_includes output, "::error::Unexpected IOError: connection lost during the rollback"
+    assert(@stubs.calls_to("kamal").any? { |args| args.first == "deploy" })
+    assert_equal "error", @gh.outputs["deploy-result"]
+    assert_equal "unknown", @gh.outputs["rollback-result"]
+
+    output, status = step("finish", result: "error", rollback_result: "unknown")
+    refute status.success?
+    assert_includes output, "intervene manually"
+    assert_includes output, "Deploy finished with result 'error'"
+  end
+
+  def test_an_unexpected_error_in_another_step_fails_it_with_an_annotation
+    File.write(File.join(@project, "etc/kamal/secrets-common"), "A=$A\n")
+    File.write(File.join(@project, ".kamal"), "a file where the directory belongs\n")
+    output, status = step("prepare-secrets", secrets_file: "etc/kamal/secrets-common")
+    assert_equal 1, status.exitstatus
+    assert_includes output, "::error::Unexpected Errno::EEXIST"
+
+    output, status = step("operation", { operation: "proxy-details" }, "CI_DEPLOY_ACTION_HOME" => File.join(tmpdir, "missing"))
+    assert_equal 1, status.exitstatus
+    assert_includes output, "::error::Unexpected Errno::ENOENT"
+    assert_empty @stubs.calls_to("kamal")
+  end
+
   def test_export_env_and_kamal_env
     _output, status = step("export-env", vars: '{"APP_HOST":"app.example.com"}', secrets: %({"SSH_KEY":"a\\nb"}))
     assert status.success?
@@ -274,5 +330,125 @@ class CliTest < Minitest::Test
     output, status = step("prepare-secrets", secrets_file: "etc/kamal/missing")
     refute status.success?
     assert_includes output, "secrets file etc/kamal/missing not found"
+  end
+end
+
+# The setup action's failure report, run as the action runs it against a local stand-in for
+# Rollbar that records each request.
+class SetupFailureReportTest < Minitest::Test
+  class FakeRollbar
+    attr_reader :requests
+
+    def initialize(status: 200)
+      @status = status
+      @requests = []
+      @server = TCPServer.new("127.0.0.1", 0)
+      @thread = Thread.new do
+        loop { serve(@server.accept) }
+      rescue IOError
+        nil
+      end
+    end
+
+    def url = "http://127.0.0.1:#{@server.addr[1]}"
+
+    def stop
+      @server.close
+      @thread.join
+    end
+
+    private
+
+    def serve(client)
+      path = client.gets.to_s.split[1]
+      headers = {}
+      while (line = client.gets) && line != "\r\n"
+        name, value = line.split(":", 2)
+        headers[name.downcase] = value.strip
+      end
+      body = client.read(headers["content-length"].to_i)
+      @requests << { path: path, token: headers["x-rollbar-access-token"], body: JSON.parse(body) }
+      client.write("HTTP/1.1 #{@status} Status\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+    ensure
+      client.close
+    end
+  end
+
+  TOKEN = "rollbar-token-from-secrets"
+
+  def setup
+    @gh = TestSupport::GithubFiles.new
+    @rollbar = FakeRollbar.new
+  end
+
+  def teardown
+    @rollbar.stop
+    @gh.cleanup
+  end
+
+  # No CI_DEPLOY_HOME or project directory: the failure may come before setup records them.
+  def report(inputs, env = {})
+    base = @gh.env.merge("CI_DEPLOY_ROLLBAR_ENDPOINT" => @rollbar.url, "GITHUB_REPOSITORY" => "example/app",
+                         "GITHUB_SHA" => "abc123", "GITHUB_RUN_ID" => "7")
+    inputs.each { |name, value| base["CI_DEPLOY_IN_#{name.to_s.upcase}"] = value }
+    Open3.capture2e(clean_env(base.merge(env)), RbConfig.ruby, File.join(ROOT, "bin/ci-deploy"), "report-setup-failure", **spawn_options)
+  end
+
+  def test_reports_a_failed_deploy_and_a_critical_item_with_the_token_from_the_secrets_json
+    output, status = report(report_destination: "staging", secrets: JSON.generate("ROLLBAR_SERVER_TOKEN" => TOKEN, "OTHER" => "x"))
+    assert status.success?, output
+    deploy, item = @rollbar.requests
+    assert_equal ["/api/1/deploy", "/api/1/item/"], @rollbar.requests.map { |request| request[:path] }
+    assert_equal TOKEN, deploy[:token]
+    assert_equal({ "environment" => "staging", "revision" => "abc123", "status" => "failed" }, deploy[:body].slice("environment", "revision", "status"))
+    assert_equal TOKEN, item[:body]["access_token"]
+    assert_equal "critical", item[:body]["data"]["level"]
+    assert_includes item[:body]["data"]["body"]["message"]["body"], "setup-failed"
+    refute_includes output, TOKEN
+  end
+
+  def test_the_explicit_token_and_environment_name_win_and_an_environment_name_alone_reports
+    _output, status = report(report_destination: "staging", report_environment_name: "stage-eu", rollbar_token: "explicit",
+                             secrets: JSON.generate("ROLLBAR_TOKEN" => TOKEN))
+    assert status.success?
+    assert_equal "explicit", @rollbar.requests.first[:token]
+    assert_equal "stage-eu", @rollbar.requests.first[:body]["environment"]
+
+    _output, status = report(report_environment_name: "production", secrets: JSON.generate("ROLLBAR_TOKEN" => TOKEN))
+    assert status.success?
+    assert_equal "production", @rollbar.requests.last[:body]["data"]["environment"]
+  end
+
+  def test_silent_without_a_destination_or_environment_to_report
+    output, status = report(secrets: JSON.generate("ROLLBAR_TOKEN" => TOKEN))
+    assert status.success?, output
+    assert_empty output
+    assert_empty @rollbar.requests
+  end
+
+  def test_without_a_token_it_only_notes_that_it_skipped
+    output, status = report({ report_destination: "staging", secrets: "not json" }, "ROLLBAR_TOKEN" => nil)
+    assert status.success?, output
+    assert_includes output, "::notice::No Rollbar token configured; the setup failure is not reported to Rollbar."
+    assert_empty @rollbar.requests
+
+    _output, status = report({ report_destination: "staging", secrets: "not json" }, "ROLLBAR_TOKEN" => "from-env")
+    assert status.success?
+    assert_equal "from-env", @rollbar.requests.first[:token]
+  end
+
+  def test_a_rollbar_error_or_an_unreachable_rollbar_is_swallowed
+    @rollbar.stop
+    @rollbar = FakeRollbar.new(status: 500)
+    output, status = report(report_destination: "staging", secrets: JSON.generate("ROLLBAR_TOKEN" => TOKEN))
+    assert status.success?, output
+    assert_includes output, "::warning::Rollbar answered HTTP 500 to the deploy report"
+    assert_includes output, "::warning::Rollbar answered HTTP 500 to the item report"
+
+    output, status = report({ report_destination: "staging", secrets: JSON.generate("ROLLBAR_TOKEN" => TOKEN) },
+                            "CI_DEPLOY_ROLLBAR_ENDPOINT" => "http://127.0.0.1:9")
+    assert status.success?, output
+    assert_includes output, "::warning::Could not report the deploy to Rollbar"
+    refute_includes output, TOKEN
   end
 end

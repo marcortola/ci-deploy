@@ -172,6 +172,65 @@ class CheckRemotePinTest < Minitest::Test
     end
   end
 
+  # The compared paths are derived, never listed: every directory, at any depth, holding an
+  # action.yml at HEAD or at the pin, so an action added or removed after the pin is caught too.
+  def test_an_action_added_or_removed_after_the_pin_fails
+    pin_workflow(@code)
+    write("new-action/action.yml", "name: new\n")
+    write("new-action/README.md", "docs\n")
+    commit("new action")
+    output, status = check
+    refute status.success?, output
+    assert_includes output, "new-action/action.yml"
+
+    commit_pin_to_head
+    write("new-action/run.sh", "echo changed\n")
+    commit("change beside the new action")
+    output, status = check
+    refute status.success?, output
+    assert_includes output, "new-action/run.sh"
+
+    commit_pin_to_head
+    FileUtils.rm_rf(File.join(@repo, "new-action"))
+    commit("remove the action")
+    output, status = check
+    refute status.success?, output
+    assert_includes output, "new-action/action.yml"
+  end
+
+  def test_a_nested_action_counts_and_a_directory_without_one_does_not
+    pin_workflow(@code)
+    write("docs/guide/action.md", "not an action\n")
+    write("docs/guide/notes.md", "notes\n")
+    commit("docs")
+    output, status = check
+    assert status.success?, output
+
+    write("tools/lint/action.yaml", "name: nested\n")
+    commit("nested action")
+    output, status = check
+    refute status.success?, output
+    assert_includes output, "tools/lint/action.yaml"
+  end
+
+  # A root action's directory is the whole repository, pins included, so its action file counts.
+  def test_a_root_action_counts
+    pin_workflow(@code)
+    write("action.yml", "name: root\n")
+    commit("root action")
+    output, status = check
+    refute status.success?, output
+    assert_includes output, "action.yml"
+
+    commit_pin_to_head
+    write("docs/notes.md", "docs only\n")
+    commit("docs")
+    output, status = check
+    assert status.success?, output
+  end
+
+  def commit_pin_to_head =pin_workflow(git("rev-parse", "HEAD").strip)
+
   def test_several_pins_a_short_pin_or_an_unknown_commit_fail
     [[@code, "f" * 40], [@code[0, 7]], ["e" * 40]].each do |shas|
       pin_workflow(*shas)

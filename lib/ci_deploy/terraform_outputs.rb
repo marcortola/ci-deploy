@@ -24,7 +24,8 @@ module CiDeploy
 
     LINE = /\A(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?<output>[A-Za-z_][A-Za-z0-9_-]*)(?<first>\[0\])?(?<optional>\?)?\z/
     DEFAULT_ADDRESS = "https://app.terraform.io"
-    RETRYABLE = [429, 500, 502, 503, 504].freeze
+    # 404 is retried too: HCP Terraform has answered 404 for existing workspaces during an outage.
+    RETRYABLE = [404, 429, 500, 502, 503, 504].freeze
 
     def self.parse_map(text)
       entries = text.to_s.each_line.with_index(1).filter_map do |line, number|
@@ -130,7 +131,8 @@ module CiDeploy
       unless status == 200
         hint = case status
                when 401, 403 then "The token was refused; check the Terraform token secret."
-               when 404 then "The workspace or its state was not found; check the workspace id and that it has been applied."
+               when 404 then "The workspace or its state was not found. Check the workspace id, that the token can read the workspace and that it has been applied; " \
+                             "if all three are right, HCP Terraform may be having an outage (it has answered 404 during one), and re-running later fixes it."
                when 0 then "Terraform could not be reached (#{body})."
                else "Terraform answered with an error; re-running later usually fixes it."
                end

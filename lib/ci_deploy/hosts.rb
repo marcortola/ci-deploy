@@ -28,8 +28,10 @@ module CiDeploy
       hosts
     end
 
-    def first(name, env: ENV)
-      list(name, env: env).first
+    # The first host in the variable. Raises like list when it holds none, unless required is
+    # false, in which case the result is nil.
+    def first(name, required: true, env: ENV)
+      list(name, required: required, env: env).first
     end
 
     def parse(value)

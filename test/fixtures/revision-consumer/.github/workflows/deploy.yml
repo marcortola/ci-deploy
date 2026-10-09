@@ -10,7 +10,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: marcortola/ci-deploy/setup@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
-      - uses: marcortola/ci-deploy/deploy@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
+      - uses: marcortola/ci-deploy/setup@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/deploy@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
         with:
           rollback: auto

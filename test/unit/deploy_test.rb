@@ -48,6 +48,23 @@ class DeployTest < Minitest::Test
                    "rollback-result" => "not-needed", "image" => "" }, @gh.outputs)
   end
 
+  # The CLI reads this when an unexpected error escapes: before kamal deploy runs, no rollback was
+  # attempted; from then on, the hosts' state is unknown.
+  def test_deploy_started_is_set_only_once_kamal_deploy_runs
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+    @runner.on(%w[kamal build], status: 1)
+    deployer = CiDeploy::Deploy.new(kamal: @kamal, runner: @runner, github: @gh.github)
+    capture_stdout { deployer.call }
+    refute deployer.deploy_started?
+
+    @runner.on(%w[kamal build], status: 0)
+    @runner.on(%w[kamal deploy], status: 1)
+    deployer = CiDeploy::Deploy.new(kamal: @kamal, runner: @runner, github: @gh.github)
+    refute deployer.deploy_started?
+    capture_stdout { deployer.call }
+    assert deployer.deploy_started?
+  end
+
   def test_dirty_tree_version_is_drawn_once_and_shared_by_build_and_deploy
     @runner.on(%w[git status --porcelain], output: " M app.rb\n")
     @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))

@@ -268,6 +268,29 @@ class CliTest < Minitest::Test
     assert_empty @stubs.calls_to("kamal")
   end
 
+  # Once kamal deploy has run, an unexpected error cannot say whether a host changed or the
+  # rollback completed: the rollback result is unknown, never not-attempted.
+  def test_an_unexpected_error_after_kamal_deploy_ran_reports_an_unknown_rollback
+    kamal(build: 0, deploy: 1)
+    fault = File.join(tmpdir, "fault.rb")
+    File.write(fault, <<~RUBY)
+      $LOAD_PATH.unshift #{File.join(ROOT, 'lib').inspect}
+      require "ci_deploy/cli"
+      CiDeploy::Rollback.prepend(Module.new { def call(*) = raise(IOError, "connection lost during the rollback") })
+    RUBY
+    output, status = step("deploy", { rollback: "auto" }, "RUBYOPT" => "-r#{fault}")
+    assert_equal 1, status.exitstatus
+    assert_includes output, "::error::Unexpected IOError: connection lost during the rollback"
+    assert(@stubs.calls_to("kamal").any? { |args| args.first == "deploy" })
+    assert_equal "error", @gh.outputs["deploy-result"]
+    assert_equal "unknown", @gh.outputs["rollback-result"]
+
+    output, status = step("finish", result: "error", rollback_result: "unknown")
+    refute status.success?
+    assert_includes output, "intervene manually"
+    assert_includes output, "Deploy finished with result 'error'"
+  end
+
   def test_an_unexpected_error_in_another_step_fails_it_with_an_annotation
     File.write(File.join(@project, "etc/kamal/secrets-common"), "A=$A\n")
     File.write(File.join(@project, ".kamal"), "a file where the directory belongs\n")
@@ -406,7 +429,7 @@ class SetupFailureReportTest < Minitest::Test
   def test_without_a_token_it_only_notes_that_it_skipped
     output, status = report({ report_destination: "staging", secrets: "not json" }, "ROLLBAR_TOKEN" => nil)
     assert status.success?, output
-    assert_includes output, "::notice::No Rollbar token configured"
+    assert_includes output, "::notice::No Rollbar token configured; the setup failure is not reported to Rollbar."
     assert_empty @rollbar.requests
 
     _output, status = report({ report_destination: "staging", secrets: "not json" }, "ROLLBAR_TOKEN" => "from-env")

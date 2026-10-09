@@ -15,8 +15,13 @@ git cat-file -e "$pin^{commit}" 2>/dev/null || { echo "check-remote-pin: $pin is
 # The action code: every directory holding an action.yml (or action.yaml) at HEAD or at the pin,
 # at any depth, so an action added or removed since the pin is compared too; plus lib, bin and
 # the locked bundle. Derived rather than listed, so a new action can never escape the comparison.
-actions=$(for rev in "$pin" HEAD; do git ls-tree -r --name-only "$rev"; done |
-    sed -n 's#^\(.*\)/action\.ya\{0,1\}ml$#\1#p' | sort -u)
+# A root action's directory is the whole repository, pins included, so its action file counts
+# (its scripts live in lib or bin like every other action's). Each listing is its own command, so
+# a git failure stops the script instead of vanishing in a pipeline.
+pin_files=$(git -c core.quotePath=false ls-tree -r --name-only "$pin")
+head_files=$(git -c core.quotePath=false ls-tree -r --name-only HEAD)
+actions=$(printf '%s\n%s\n' "$pin_files" "$head_files" |
+    sed -n -e 's#^\(.*\)/action\.ya\{0,1\}ml$#\1#p' -e '/^action\.ya\{0,1\}ml$/p' | sort -u)
 set -- lib bin Gemfile Gemfile.lock .ruby-version
 set -f
 old_ifs=$IFS

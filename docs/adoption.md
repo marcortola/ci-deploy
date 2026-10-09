@@ -29,6 +29,12 @@ phases and their order stay in the component.
    critical item itself, with the token from `rollbar-token` or the secrets input. Leave both
    empty in operations jobs and configuration checks, which then stay silent.
 
+   Put setup immediately before deploy: a failing step of the component's own between them
+   skips the deploy action and is reported by neither. The report runs on whatever Ruby is on
+   `PATH` when Ruby setup did not run (GitHub-hosted runners ship one); it needs Ruby 3.0 or
+   later; without one (some self-hosted runners or container jobs) the report step fails without
+   changing the job's result, and nothing reaches Rollbar.
+
    ```yaml
    - uses: marcortola/ci-deploy/setup@<sha> # v1.0.0
      with:
@@ -116,7 +122,7 @@ a setting; none is decided silently.
 | Terraform output lookup | jq without status checks; status checks and retries; lists as `.value[]` (newlines), `.value[0]` or joined | The checked, retried lookup for everyone; `outputs-map` entries cover each list form. |
 | Host list separator in the configuration | commas, spaces | `CiDeploy::Hosts` accepts both, and newlines. |
 | Kamal environment for later steps | exported to the job in some components | Always exported by setup, so rollback and version reads see it. |
-| Branch and destination pairing | production only from the default branch, that branch only to production; no destination meaning production | `branch-policy` (`enforce` or `off`), `production-branch`, `production-destination`; no destination counts as production. |
+| Branch and destination pairing | production only from the default branch, that branch only to production; no destination meaning production | `branch-policy` (`enforce` or `off`), `production-branch`, `production-destination`; no destination counts as production. Behaviour change: `enforce` also refuses a checkout whose commit `git rev-parse HEAD` cannot read (`dubious ownership` in container jobs, `checkout: false` without a checkout). |
 | Rollbar token variable | several names | `rollbar-token` input, else the first of `ROLLBAR_TOKEN`, `ROLLBAR_SERVER_TOKEN`, `ROLLBAR_ACCESS_TOKEN`, `LOG_ROLLBAR_ACCESS_TOKEN`. |
 | Reporting a failure before the deploy | a single composite that reported setup failures too | Setup's `report-destination` (or `report-environment-name`): a failed setup step is reported as a failed deploy with result `setup-failed`. Its `rollbar-token` input, else the same names, read from the secrets input and then the environment. |
 | Hook runner | console from a fresh container with `bin/console`; Node in the live container (post-deploy) or a fresh one; Python with a `python` prefix and no role filter; one configuration file per environment with no destination | `ci_deploy_exec MODE`, `ci_deploy_symfony`, `ci_deploy_node`, `ci_deploy_python`; `CI_DEPLOY_HOOK_ROLES` (empty for none), `CI_DEPLOY_HOOK_CONFIG`; `-d` only when Kamal sets a destination. |
@@ -135,13 +141,17 @@ a setting; none is decided silently.
 - **Prebuilt images need the `service` label.** Kamal refuses an image without
   `LABEL service=<service>`; images built by Kamal carry it, images built elsewhere must add it.
 - **A refused branch/destination pairing reports `refused`** and still sends the Rollbar report.
+- **`branch-policy: enforce` fails closed.** A checkout whose commit git cannot read (a
+  `dubious ownership` refusal in a container job, a `checkout: false` job without a checkout) is
+  refused (`refused`) instead of deployed unchecked. Fix the checkout, or set `branch-policy: off`.
 
 ## Running Kamal by hand (break-glass)
 
 Deploys and operations run through the actions. When they cannot (GitHub Actions is down, or a
 configuration needs reading before a fix), Kamal can run from a workstation with what the setup
 action would have prepared. Use the ci-deploy revision the component pins, so the Kamal version,
-`CiDeploy::Hosts` and the hook helpers are the ones its deploys use:
+`CiDeploy::Hosts` and the hook helpers are the ones its deploys use. It needs Ruby 3.3 (the
+Gemfile requires `~> 3.3.0`) and Bundler:
 
 ```sh
 git clone https://github.com/marcortola/ci-deploy ~/src/ci-deploy
@@ -152,6 +162,8 @@ cd <component>/<project-directory>
 export BUNDLE_GEMFILE=~/src/ci-deploy/Gemfile          # the locked Kamal
 export RUBYLIB=~/src/ci-deploy/lib                     # configurations: require "ci_deploy/hosts"
 export CI_DEPLOY_HOOKS_LIB=~/src/ci-deploy/lib/sh      # hooks: . "$CI_DEPLOY_HOOKS_LIB/hooks.sh"
+export CI_DEPLOY_CONFIG=etc/kamal/deploy.yml           # the configuration the hook helpers pass
+                                                       # (else ./etc/kamal/deploy.yml)
 export PATH="$HOME/src/ci-deploy/bin:$PATH"            # kamal and the ci-deploy-* helpers
 export WEB_SERVER_IPS=192.0.2.10,192.0.2.11            # each NAME of the outputs map, from the
                                                        # Terraform workspace's outputs
@@ -163,7 +175,8 @@ kamal config -c etc/kamal/deploy.yml -d staging        # read the rendered confi
 ```
 
 Without `RUBYLIB` the configuration fails to render (`cannot load such file -- ci_deploy/hosts`);
-without `CI_DEPLOY_HOOKS_LIB` every hook that sources the helpers stops at its first line. A
+without `CI_DEPLOY_HOOKS_LIB` every hook that sources the helpers stops at its first line, and
+without `CI_DEPLOY_CONFIG` the helpers use `./etc/kamal/deploy.yml`. A
 deploy run this way gets none of the deploy action's guards (one explicit version, the branch
 policy, rollback verification, Rollbar reporting): pass `--version` explicitly and report the
 outcome by hand.

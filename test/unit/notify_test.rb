@@ -29,6 +29,13 @@ class NotifyTest < Minitest::Test
     assert_empty @requests
   end
 
+  def test_the_skip_notice_names_what_is_not_reported
+    notify(deploy_result: "deploy-failed")
+    assert_includes @gh.log, "::notice::No Rollbar token configured; the deploy outcome is not reported to Rollbar."
+    notify(deploy_result: "setup-failed")
+    assert_includes @gh.log, "::notice::No Rollbar token configured; the setup failure is not reported to Rollbar."
+  end
+
   def test_success_records_a_deploy_and_raises_no_item
     notify(explicit_token: "token-1")
     assert_equal 1, @requests.size

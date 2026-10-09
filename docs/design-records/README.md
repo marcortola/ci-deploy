@@ -10,4 +10,4 @@ documents under `docs/`, not here.
 
 | Record | Status |
 | --- | --- |
-| [0001 Shared deploy components](0001-shared-deploy-components.md) | Accepted 2026-10-08, amended 2026-10-08 |
+| [0001 Shared deploy components](0001-shared-deploy-components.md) | Accepted 2026-10-08, amended 2026-10-08 and 2026-10-09 |

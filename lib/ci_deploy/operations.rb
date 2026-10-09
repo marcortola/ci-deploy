@@ -18,6 +18,9 @@ module CiDeploy
       argv.shift if argv.first == "kamal"
       raise Invalid, "no Kamal arguments given" if argv.empty?
 
+      # Thor stops reading options at `--`, so the -c and -d the action appends would become words.
+      raise Invalid, "a bare -- is refused: it would end Kamal's options before the action's own" if argv.include?("--")
+
       # The checks read the options as Thor will; Kamal still receives argv exactly as typed.
       options = expand(argv)
       reserved = options.find { |arg| arg.match?(RESERVED) }
@@ -63,13 +66,19 @@ module CiDeploy
 
     # Every --hosts/-h and --roles/-r filter as [canonical option, value], in the forms `--hosts=a,b`,
     # `--hosts a,b`, `-h=a,b`, `-h a,b` (Thor's) and `-ha,b`, which Thor leaves as an argument that
-    # Kamal's commands then refuse. A separate value must be the next word and not an option: Thor
-    # gives `-h` followed by an option or nothing no host list, so the value counts as empty.
+    # Kamal's commands then refuse. A separate value must be the next word and not an option: given
+    # an option or nothing, Thor assigns the literal "hosts" (or "roles"), so the value counts as
+    # empty. Thor reads --no-hosts, --skip-hosts and their underscore spellings as no filter at all,
+    # which a later one applies over an explicit --hosts, so they count as empty too.
+    NEGATED = /\A--(?:no|skip)[-_](hosts|roles)(=.*)?\z/m
+
     def filter_values(argv)
       names = { "--hosts" => "--hosts", "-h" => "--hosts", "--roles" => "--roles", "-r" => "--roles" }
       filters = []
       argv.each_with_index do |arg, index|
-        if names.key?(arg)
+        if (match = arg.match(NEGATED))
+          filters << ["--#{match[1]}", ""]
+        elsif names.key?(arg)
           value = argv[index + 1].to_s
           filters << [names[arg], value.start_with?("-") ? "" : value]
         elsif (match = arg.match(/\A(--hosts|--roles)=(.*)\z/m))

@@ -163,17 +163,20 @@ module CiDeploy
       rollback = input("ROLLBACK")
       raise ArgumentError, "the rollback input is required: auto or off" if rollback.empty?
 
-      outcome = Deploy.new(kamal: kamal, runner: runner, github: @github, mode: input("BUILD_MODE", "kamal"),
-                           version: input("VERSION"), rollback: rollback,
-                           skip_hooks: input("SKIP_HOOKS", "false") == "true", before_deploy: before_deploy_command,
-                           command_env: command_env).call
+      deployer = Deploy.new(kamal: kamal, runner: runner, github: @github, mode: input("BUILD_MODE", "kamal"),
+                            version: input("VERSION"), rollback: rollback,
+                            skip_hooks: input("SKIP_HOOKS", "false") == "true", before_deploy: before_deploy_command,
+                            command_env: command_env)
+      outcome = deployer.call
       @out.puts "Deploy result: #{outcome.deploy_result}; rollback: #{outcome.rollback_result}"
       outcome.success? ? 0 : 1
     rescue Metadata::PolicyViolation
       raise
+    # Once kamal deploy has run, the error may have come mid-deploy or mid-rollback: no host state
+    # can be claimed, so the rollback result is unknown rather than not-attempted.
     rescue StandardError => e
       @github.set_output("deploy-result", "error")
-      @github.set_output("rollback-result", "not-attempted")
+      @github.set_output("rollback-result", deployer&.deploy_started? ? "unknown" : "not-attempted")
       raise e
     end
 
@@ -273,6 +276,8 @@ module CiDeploy
       rollback = input("ROLLBACK_RESULT")
       if rollback == "failed"
         @github.error("The rollback did not complete. The failed version may still be serving - intervene manually.")
+      elsif rollback == "unknown"
+        @github.error("The deploy step failed unexpectedly after kamal deploy started, so neither the version serving nor the rollback is known. The failed version may be serving - intervene manually.")
       end
       return 0 if result == "success"
 

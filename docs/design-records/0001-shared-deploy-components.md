@@ -1,6 +1,6 @@
 # 0001 Shared deploy components
 
-Status: Accepted, 2026-10-08; amended 2026-10-08 (scope cut, see [Amendment](#amendment-2026-10-08-scope-cut)).
+Status: Accepted, 2026-10-08; amended 2026-10-08 (scope cut, see [Amendment](#amendment-2026-10-08-scope-cut)); amended 2026-10-09 (break-glass procedure documented, no launcher).
 Implementation: phase 1 (this repository); consumers not yet migrated.
 
 ## Context
@@ -82,6 +82,8 @@ Approved by the user during the review of the phase 1 pull request.
   integration scenario, documentation and the revision check's `launcher` input are removed. The
   user never deploys from a workstation, so the launcher was code to maintain and keep identical
   in every component without a caller. Deploys and operations run only through the actions.
+  (Amended 2026-10-09: a manual break-glass procedure, with no launcher, is documented in
+  [adoption](../adoption.md#running-kamal-by-hand-break-glass) for when the actions cannot run.)
 - **Rollback has no default.** `rollback` is required, so a component that relies on automatic
   rollback cannot lose it by omitting the input during migration.
 

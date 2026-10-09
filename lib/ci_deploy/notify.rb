@@ -44,7 +44,8 @@ module CiDeploy
     def call(explicit_token:, environment:, deploy_result:, rollback_result:, repository:, revision:, actor:, run_url:, secrets_json: "")
       token = token(explicit_token, secrets_json: secrets_json)
       if token.empty?
-        @github.notice("No Rollbar token configured; skipping deploy reporting.")
+        subject = deploy_result == "setup-failed" ? "the setup failure" : "the deploy outcome"
+        @github.notice("No Rollbar token configured; #{subject} is not reported to Rollbar.")
         return :skipped
       end
 

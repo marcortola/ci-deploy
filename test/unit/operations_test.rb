@@ -101,6 +101,28 @@ class OperationsTest < Minitest::Test
     assert_equal [%w[app details -qr web]], argvs(operation: "kamal", args: "app details -qr web")
   end
 
+  # Thor reads --no-hosts, --skip-hosts and their underscore spellings as "no filter", which a later
+  # one applies over an explicit --hosts: every host again.
+  def test_a_negated_hosts_or_roles_filter_is_refused
+    %w[hosts roles].each do |name|
+      ["--no-#{name}", "--skip-#{name}", "--no_#{name}", "--skip_#{name}", "--no-#{name}=x"].each do |negated|
+        args = "proxy reboot -y --hosts=192.0.2.10 --roles=web #{negated}"
+        error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+        assert_includes error.message, "--#{name} needs at least one value", args
+      end
+    end
+  end
+
+  def test_a_bare_double_dash_is_refused
+    # Thor stops reading options at `--`, so the -c and -d the action appends would become words.
+    ["app details --", "proxy reboot -y --hosts=192.0.2.10 --", "-- app details"].each do |args|
+      error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+      assert_includes error.message, "--", args
+      assert_includes error.message, "options", args
+    end
+    assert_equal [["app", "exec", "echo --"]], argvs(operation: "kamal", args: "app exec 'echo --'")
+  end
+
   def test_a_squished_option_cannot_hide_a_reserved_option_or_stand_for_hosts
     ["app details -yc other.yml", "app details -qd production", "app details -vdproduction"].each do |args|
       error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }

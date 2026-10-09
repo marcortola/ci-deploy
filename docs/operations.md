@@ -52,7 +52,10 @@ Guards:
   select every host or role, so they are rejected, in free arguments and in the `hosts` and
   `roles` inputs alike. Free arguments are checked as Kamal's option parser (Thor) reads them:
   squished short options count (`-yh ""` is `-y -h ""`, and a later filter replaces an earlier
-  one), and `-h` or `--hosts` followed by another option or by nothing gives no host list.
+  one); `-h` or `--hosts` followed by another option or by nothing, which Thor reads as the literal
+  host `hosts`, is refused like an empty filter; so are `--no-hosts`, `--skip-hosts` (and
+  `_` spellings, and the same for roles), which Thor reads as no filter. A bare `--` is refused:
+  it would end Kamal's options before the action's own `-c` and `-d`.
 - **Free arguments are split like shell words** (quotes group) and passed as a vector: `;`, `|`,
   `$()` and backticks reach Kamal as plain characters. A command that Kamal runs inside a
   container (`app exec`, `server exec`) is still interpreted by the shell there, as Kamal always

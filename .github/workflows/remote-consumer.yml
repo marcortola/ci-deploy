@@ -34,7 +34,7 @@ jobs:
           - scenario: build-failure
             fail: build
     steps:
-      - uses: marcortola/ci-deploy/setup@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/setup@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         with:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10,192.0.2.11","DATABASE_SERVER_IPS":"192.0.2.30"}'
@@ -54,7 +54,7 @@ jobs:
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/deploy@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/deploy@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         id: deploy
         continue-on-error: true
         env:
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: marcortola/ci-deploy/setup@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/setup@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         with:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10","DATABASE_SERVER_IPS":"192.0.2.30"}'
@@ -93,20 +93,20 @@ jobs:
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/operations@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/operations@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         with:
           operation: kamal
           args: app exec --reuse "echo 'semi;colon' $(id -u) | wc -c"
           destination: staging
 
-      - uses: marcortola/ci-deploy/operations@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/operations@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         id: untargeted
         continue-on-error: true
         with:
           operation: proxy-reboot
           destination: staging
 
-      - uses: marcortola/ci-deploy/operations@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/operations@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         with:
           operation: proxy-reboot
           hosts: 192.0.2.10
@@ -170,7 +170,7 @@ jobs:
           (exec 3<>/dev/tcp/127.0.0.1/18765)
           echo "CI_DEPLOY_ROLLBAR_ENDPOINT=http://127.0.0.1:18765" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/setup@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/setup@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         id: setup
         continue-on-error: true
         with:
@@ -207,6 +207,6 @@ jobs:
 
       # This repository's own docs and tests reference it, so the check runs on a synthetic
       # consumer pinned to the same commit.
-      - uses: marcortola/ci-deploy/revision-check@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+      - uses: marcortola/ci-deploy/revision-check@96605db5d2b80b2be62c2f2d4d298f52bb79a15d # fix-pre-v1
         with:
           component: test/fixtures/revision-consumer

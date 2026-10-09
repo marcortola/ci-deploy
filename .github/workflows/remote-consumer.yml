@@ -5,8 +5,8 @@ name: Remote consumption
 # in the same pull request whenever one does, together with test/fixtures/revision-consumer (the
 # release procedure in docs/releasing.md). CI's script/check-remote-pin fails while it is stale.
 # Kamal is replaced by test/remote/kamal, which records its calls, so the scenarios check the
-# action wiring: one version, outputs, rollback, cleanup and reporting after a failure, and the
-# re-raised result.
+# action wiring: one version, outputs, rollback, cleanup and reporting after a failure, the
+# re-raised result, and setup reporting its own failure to a local stand-in for Rollbar.
 
 on:
   pull_request:
@@ -122,6 +122,79 @@ jobs:
           test "$UNTARGETED" = failure
           test "$(printf '%s\n' "$calls" | grep -c '^proxy|reboot')" -eq 1
           printf '%s\n' "$calls" | grep -Fxq "proxy|reboot|-y|--hosts=192.0.2.10|-c|etc/kamal/deploy.yml|-d|staging"
+
+  setup-failure:
+    name: Setup failure (${{ matrix.scenario }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Fails in its first step after checkout, before Ruby is set up or anything is exported.
+          - scenario: early
+            project-directory: test/fixtures/missing
+            outputs-map: ""
+            report-destination: staging
+          # Fails at the Terraform lookup (no token), after Ruby and the export.
+          - scenario: late
+            project-directory: test/fixtures/consumer
+            outputs-map: WEB_SERVER_IPS=web_server_ips
+            report-destination: staging
+          - scenario: silent
+            project-directory: test/fixtures/missing
+            outputs-map: ""
+            report-destination: ""
+    steps:
+      # A local stand-in for Rollbar that records each request, one JSON line each.
+      - name: Start a recording Rollbar
+        run: |
+          cat > "$RUNNER_TEMP/rollbar.py" <<'PY'
+          import http.server, json, sys
+          log = open(sys.argv[1], "a", buffering=1)
+          class Handler(http.server.BaseHTTPRequestHandler):
+              def do_POST(self):
+                  body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                  log.write(json.dumps({"path": self.path, "token": self.headers.get("X-Rollbar-Access-Token"), "body": json.loads(body)}) + "\n")
+                  self.send_response(200)
+                  self.send_header("Content-Length", "2")
+                  self.end_headers()
+                  self.wfile.write(b"{}")
+              def log_message(self, *args):
+                  pass
+          http.server.HTTPServer(("127.0.0.1", 18765), Handler).serve_forever()
+          PY
+          touch "$RUNNER_TEMP/rollbar.log"
+          nohup python3 "$RUNNER_TEMP/rollbar.py" "$RUNNER_TEMP/rollbar.log" > /dev/null 2>&1 &
+          for _ in $(seq 50); do (exec 3<>/dev/tcp/127.0.0.1/18765) 2>/dev/null && break; sleep 0.2; done
+          (exec 3<>/dev/tcp/127.0.0.1/18765)
+          echo "CI_DEPLOY_ROLLBAR_ENDPOINT=http://127.0.0.1:18765" >> "$GITHUB_ENV"
+
+      - uses: marcortola/ci-deploy/setup@4eff6a68d62328317ae0ccbdc3e995304edbb562 # feat/initial-components
+        id: setup
+        continue-on-error: true
+        with:
+          project-directory: ${{ matrix.project-directory }}
+          vars: '{"WEB_SERVER_IPS":"192.0.2.10","DATABASE_SERVER_IPS":"192.0.2.30"}'
+          secrets: '{"ROLLBAR_SERVER_TOKEN":"remote-fake-token"}'
+          outputs-map: ${{ matrix.outputs-map }}
+          report-destination: ${{ matrix.report-destination }}
+
+      - name: Check the report
+        env:
+          OUTCOME: ${{ steps.setup.outcome }}
+          REPORTED: ${{ matrix.report-destination != '' }}
+          LOG: ${{ runner.temp }}/rollbar.log
+        run: |
+          cat "$LOG"
+          test "$OUTCOME" = failure
+          if [ "$REPORTED" = true ]; then
+            jq -es 'length == 2' "$LOG"
+            jq -es '.[0] | .path == "/api/1/deploy" and .token == "remote-fake-token" and .body.status == "failed" and .body.environment == "staging"' "$LOG"
+            jq -es '.[1] | .path == "/api/1/item/" and .body.access_token == "remote-fake-token" and .body.data.level == "critical" and (.body.data.body.message.body | contains("setup-failed"))' "$LOG"
+          else
+            test ! -s "$LOG"
+          fi
 
   revision-check:
     name: Revision check

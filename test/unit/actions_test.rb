@@ -71,6 +71,26 @@ class ActionsTest < Minitest::Test
     assert_equal "${{ steps.deploy.outputs.deploy-result }}", after.last.dig("env", "CI_DEPLOY_IN_RESULT")
   end
 
+  # GitHub skips the deploy action (and its reporting) when setup fails, so setup reports a
+  # failure itself, last, only after a failed step and only when told what it deploys.
+  def test_setup_reports_its_own_failure_last_and_only_when_configured
+    report = steps("setup").last
+    assert_equal "Report a setup failure", report["name"]
+    assert_equal "failure() && (inputs.report-destination != '' || inputs.report-environment-name != '')", report["if"]
+    assert_equal true, report["continue-on-error"]
+    assert_equal 'ruby "$GITHUB_ACTION_PATH/../bin/ci-deploy" report-setup-failure', report["run"]
+    assert_equal({ "CI_DEPLOY_IN_REPORT_DESTINATION" => "${{ inputs.report-destination }}",
+                   "CI_DEPLOY_IN_REPORT_ENVIRONMENT_NAME" => "${{ inputs.report-environment-name }}",
+                   "CI_DEPLOY_IN_ROLLBAR_TOKEN" => "${{ inputs.rollbar-token }}",
+                   "CI_DEPLOY_IN_SECRETS" => "${{ inputs.secrets }}" }, report["env"])
+    inputs = ACTIONS["setup"]["inputs"]
+    %w[report-destination report-environment-name rollbar-token].each do |name|
+      assert_equal "", inputs.dig(name, "default"), name
+      refute inputs.dig(name, "required"), name
+    end
+    steps("setup")[0...-1].each { |s| refute s["if"].to_s.match?(/always\(\)|failure\(\)/), "#{s['name']} runs after a failure" }
+  end
+
   def test_deploy_and_operations_check_they_run_the_setup_revision
     assert_equal "${{ github.action_path }}/..", step("deploy", "deploy").dig("env", "CI_DEPLOY_ACTION_HOME")
     ops = steps("operations").find { |s| s["run"] }

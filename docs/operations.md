@@ -50,10 +50,13 @@ Guards:
   interrupts every application on the host; follow [the proxy procedure](proxy.md).
 - **An empty filter is refused.** `--hosts=,`, `--hosts ""`, `-h ""`, `--roles=` and the like would
   select every host or role, so they are rejected, in free arguments and in the `hosts` and
-  `roles` inputs alike.
+  `roles` inputs alike. Free arguments are checked as Kamal's option parser (Thor) reads them:
+  squished short options count (`-yh ""` is `-y -h ""`, and a later filter replaces an earlier
+  one), and `-h` or `--hosts` followed by another option or by nothing gives no host list.
 - **Free arguments are split like shell words** (quotes group) and passed as a vector: `;`, `|`,
   `$()` and backticks reach Kamal as plain characters. A command that Kamal runs inside a
   container (`app exec`, `server exec`) is still interpreted by the shell there, as Kamal always
-  does. `-c`/`-d` cannot be given there; use the `config` and `destination` inputs.
+  does. `-c`/`-d` cannot be given there, squished (`-yc`) or not; use the `config` and
+  `destination` inputs.
 - Roles, hosts, names and log filters are validated before Kamal runs.
 - The action refuses to run if the setup action came from another revision.

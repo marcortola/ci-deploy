@@ -19,6 +19,27 @@ phases and their order stay in the component.
    component's `Gemfile` entry for Kamal (or the `gem install kamal` step); the locked Kamal comes
    from this repository. The secrets file is copied to `.kamal/`; keep that copy git-ignored, or
    the working tree is dirty and the derived version carries an `_uncommitted_` suffix.
+
+   In a deploy job, pass setup the same destination expression as the deploy step, as
+   `report-destination` (and the deploy's `environment-name`, if it sets one, as
+   `report-environment-name`; a configuration without destinations passes
+   `report-environment-name: production`). When a setup step fails (an HCP Terraform outage, a
+   missing output, a secret that cannot be exported), GitHub skips the deploy action and its
+   reporting; setup then records a failed deploy in Rollbar (result `setup-failed`) and raises the
+   critical item itself, with the token from `rollbar-token` or the secrets input. Leave both
+   empty in operations jobs and configuration checks, which then stay silent.
+
+   ```yaml
+   - uses: marcortola/ci-deploy/setup@<sha> # v1.0.0
+     with:
+       secrets: ${{ toJSON(secrets) }}
+       report-destination: ${{ inputs.destination }}
+       # ...
+   - uses: marcortola/ci-deploy/deploy@<sha> # v1.0.0
+     with:
+       destination: ${{ inputs.destination }}
+       rollback: auto
+   ```
 4. **Map Terraform outputs.** Translate the component's output lookups into an `outputs-map`:
 
    | Lookup in the component | Map entry |
@@ -31,8 +52,10 @@ phases and their order stay in the component.
    variable (`split(",")`, `split(" ")`, a partial that loops over lines) with
    `<% require "ci_deploy/hosts" %>` and `<%= CiDeploy::Hosts.list("WEB_SERVER_IPS").to_json %>`
    (or `.first` for one host). It accepts commas, spaces and newlines, drops duplicates and
-   fails the render naming the variable when it is empty. `RUBYLIB` points at this revision's
-   `lib/` after setup.
+   fails the render naming the variable when it is empty. For an optional variable (a
+   `NAME=output?` entry), pass `required: false`: `list` then returns an empty list and `first`
+   returns `nil`. `RUBYLIB` points at this revision's `lib/` after setup; outside the actions, set
+   it yourself (see [running Kamal by hand](#running-kamal-by-hand-break-glass)).
 6. **Replace the deploy.** One `deploy` step replaces version capture, build, deploy, rollback,
    metadata, cleanup and Rollbar reporting. `rollback` is required (`auto` or `off`): carry over
    the component's current behaviour, `auto` where it rolled back automatically. Choose
@@ -95,6 +118,7 @@ a setting; none is decided silently.
 | Kamal environment for later steps | exported to the job in some components | Always exported by setup, so rollback and version reads see it. |
 | Branch and destination pairing | production only from the default branch, that branch only to production; no destination meaning production | `branch-policy` (`enforce` or `off`), `production-branch`, `production-destination`; no destination counts as production. |
 | Rollbar token variable | several names | `rollbar-token` input, else the first of `ROLLBAR_TOKEN`, `ROLLBAR_SERVER_TOKEN`, `ROLLBAR_ACCESS_TOKEN`, `LOG_ROLLBAR_ACCESS_TOKEN`. |
+| Reporting a failure before the deploy | a single composite that reported setup failures too | Setup's `report-destination` (or `report-environment-name`): a failed setup step is reported as a failed deploy with result `setup-failed`. Its `rollbar-token` input, else the same names, read from the secrets input and then the environment. |
 | Hook runner | console from a fresh container with `bin/console`; Node in the live container (post-deploy) or a fresh one; Python with a `python` prefix and no role filter; one configuration file per environment with no destination | `ci_deploy_exec MODE`, `ci_deploy_symfony`, `ci_deploy_node`, `ci_deploy_python`; `CI_DEPLOY_HOOK_ROLES` (empty for none), `CI_DEPLOY_HOOK_CONFIG`; `-d` only when Kamal sets a destination. |
 | Hook retries | a local `retry` helper | `ci_deploy_retry ATTEMPTS SLEEP CMD...`. |
 | Dependabot security merge | merge only; merge and dispatch the deploy workflow | `deploy-workflow` input of `dependabot-merge`. |
@@ -111,3 +135,35 @@ a setting; none is decided silently.
 - **Prebuilt images need the `service` label.** Kamal refuses an image without
   `LABEL service=<service>`; images built by Kamal carry it, images built elsewhere must add it.
 - **A refused branch/destination pairing reports `refused`** and still sends the Rollbar report.
+
+## Running Kamal by hand (break-glass)
+
+Deploys and operations run through the actions. When they cannot (GitHub Actions is down, or a
+configuration needs reading before a fix), Kamal can run from a workstation with what the setup
+action would have prepared. Use the ci-deploy revision the component pins, so the Kamal version,
+`CiDeploy::Hosts` and the hook helpers are the ones its deploys use:
+
+```sh
+git clone https://github.com/marcortola/ci-deploy ~/src/ci-deploy
+git -C ~/src/ci-deploy checkout <the component's pinned sha>
+(cd ~/src/ci-deploy && bundle install)
+
+cd <component>/<project-directory>
+export BUNDLE_GEMFILE=~/src/ci-deploy/Gemfile          # the locked Kamal
+export RUBYLIB=~/src/ci-deploy/lib                     # configurations: require "ci_deploy/hosts"
+export CI_DEPLOY_HOOKS_LIB=~/src/ci-deploy/lib/sh      # hooks: . "$CI_DEPLOY_HOOKS_LIB/hooks.sh"
+export PATH="$HOME/src/ci-deploy/bin:$PATH"            # kamal and the ci-deploy-* helpers
+export WEB_SERVER_IPS=192.0.2.10,192.0.2.11            # each NAME of the outputs map, from the
+                                                       # Terraform workspace's outputs
+export SSH_USER=deploy                                 # and the other variables and secrets the
+                                                       # configuration and secrets file read
+mkdir -p .kamal && cp etc/kamal/secrets-common .kamal/ # setup's secrets-file copy
+
+kamal config -c etc/kamal/deploy.yml -d staging        # read the rendered configuration first
+```
+
+Without `RUBYLIB` the configuration fails to render (`cannot load such file -- ci_deploy/hosts`);
+without `CI_DEPLOY_HOOKS_LIB` every hook that sources the helpers stops at its first line. A
+deploy run this way gets none of the deploy action's guards (one explicit version, the branch
+policy, rollback verification, Rollbar reporting): pass `--version` explicitly and report the
+outcome by hand.

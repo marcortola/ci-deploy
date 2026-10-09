@@ -88,6 +88,31 @@ class OperationsTest < Minitest::Test
     end
   end
 
+  # Thor (Kamal's option parser) reads a squished `-yh` as `-y -h`, so `-h`'s value is the next
+  # word; `-h` followed by another option or nothing gets no host list either.
+  def test_squished_short_options_are_read_the_way_thor_reads_them
+    [%(proxy reboot -yh ""), %(proxy reboot -yh ''), "proxy reboot -hy", "proxy reboot -yh", "proxy reboot -h -y", "proxy reboot --hosts -y",
+     %(proxy reboot --hosts=192.0.2.10 -yh ""), %(app details -yr ""), "app details -ry"].each do |args|
+      error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+      assert_includes error.message, "needs at least one value", args
+    end
+    assert_equal [%w[proxy reboot -yh 192.0.2.10]], argvs(operation: "kamal", args: "proxy reboot -yh 192.0.2.10")
+    assert_equal [%w[proxy reboot -y -h=192.0.2.10]], argvs(operation: "kamal", args: "proxy reboot -y -h=192.0.2.10")
+    assert_equal [%w[app details -qr web]], argvs(operation: "kamal", args: "app details -qr web")
+  end
+
+  def test_a_squished_option_cannot_hide_a_reserved_option_or_stand_for_hosts
+    ["app details -yc other.yml", "app details -qd production", "app details -vdproduction"].each do |args|
+      error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+      assert_includes error.message, "set by the action's configuration and destination inputs", args
+    end
+    # Thor reads neither as a host filter, so the command still needs an explicit target.
+    ["proxy reboot -yh=192.0.2.10", "remove -yh=192.0.2.10"].each do |args|
+      error = assert_raises(CiDeploy::Operations::Invalid, args) { argvs(operation: "kamal", args: args) }
+      assert_includes error.message, "add --hosts with an explicit target", args
+    end
+  end
+
   def test_an_empty_hosts_or_roles_input_item_is_refused_in_the_catalog
     [{ operation: "proxy-reboot", hosts: "," }, { operation: "proxy-reboot", hosts: " , " }, { operation: "host-exec", command: "uptime", hosts: "192.0.2.10," },
      { operation: "host-exec", command: "uptime", roles: "," }, { operation: "logs", target: "app", roles: "web,,worker" }].each do |inputs|

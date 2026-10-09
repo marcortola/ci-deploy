@@ -18,14 +18,16 @@ module CiDeploy
       argv.shift if argv.first == "kamal"
       raise Invalid, "no Kamal arguments given" if argv.empty?
 
-      reserved = argv.find { |arg| arg.match?(RESERVED) }
+      # The checks read the options as Thor will; Kamal still receives argv exactly as typed.
+      options = expand(argv)
+      reserved = options.find { |arg| arg.match?(RESERVED) }
       if reserved
         raise Invalid, "#{reserved} is set by the action's configuration and destination inputs, not by the free arguments"
       end
-      filters = filter_values(argv)
+      filters = filter_values(options)
       empty = filters.find { |_option, value| value.split(",").all? { |item| item.strip.empty? } }
       raise Invalid, "#{empty.first} needs at least one value: an empty filter would select every host" if empty
-      if targeted?(argv) && filters.none? { |option, _value| option == "--hosts" }
+      if targeted?(options) && filters.none? { |option, _value| option == "--hosts" }
         raise Invalid, "this command stops, replaces or removes the proxy or the application on every host it reaches: add --hosts with an explicit target"
       end
 
@@ -50,14 +52,26 @@ module CiDeploy
       words.any? { |word| TARGETED_TOP.include?(word) }
     end
 
-    # Every --hosts/-h and --roles/-r filter as [canonical option, value], in the forms Kamal's
-    # option parser accepts: `--hosts=a,b`, `--hosts a,b`, `-ha,b`, `-h a,b`.
+    # Thor, Kamal's option parser, reads letters squished behind one dash as separate options:
+    # `-yh` is `-y -h`, whose value is the next word. Only letters squish (`-h192.0.2.10` does
+    # not), as in Thor.
+    SQUISHED = /\A-([A-Za-z]{2,})\z/
+
+    def expand(argv)
+      argv.flat_map { |arg| (match = arg.match(SQUISHED)) ? match[1].chars.map { |letter| "-#{letter}" } : [arg] }
+    end
+
+    # Every --hosts/-h and --roles/-r filter as [canonical option, value], in the forms `--hosts=a,b`,
+    # `--hosts a,b`, `-h=a,b`, `-h a,b` (Thor's) and `-ha,b`, which Thor leaves as an argument that
+    # Kamal's commands then refuse. A separate value must be the next word and not an option: Thor
+    # gives `-h` followed by an option or nothing no host list, so the value counts as empty.
     def filter_values(argv)
       names = { "--hosts" => "--hosts", "-h" => "--hosts", "--roles" => "--roles", "-r" => "--roles" }
       filters = []
       argv.each_with_index do |arg, index|
         if names.key?(arg)
-          filters << [names[arg], argv[index + 1].to_s]
+          value = argv[index + 1].to_s
+          filters << [names[arg], value.start_with?("-") ? "" : value]
         elsif (match = arg.match(/\A(--hosts|--roles)=(.*)\z/m))
           filters << [match[1], match[2]]
         elsif (match = arg.match(/\A-([hr])(.+)\z/m))

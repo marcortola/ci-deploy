@@ -26,6 +26,18 @@ class HostsTest < Minitest::Test
     assert_equal "192.0.2.10", CiDeploy::Hosts.first("DB", env: { "DB" => "192.0.2.10,192.0.2.11" })
   end
 
+  def test_first_raises_by_default_when_the_variable_holds_no_host
+    error = assert_raises(CiDeploy::Hosts::MissingHosts) { CiDeploy::Hosts.first("DB", env: {}) }
+    assert_includes error.message, "DB"
+    assert_raises(CiDeploy::Hosts::MissingHosts) { CiDeploy::Hosts.first("DB", env: { "DB" => " , " }) }
+  end
+
+  def test_optional_first_is_nil_without_a_host_and_the_first_host_otherwise
+    assert_nil CiDeploy::Hosts.first("DB", required: false, env: {})
+    assert_nil CiDeploy::Hosts.first("DB", required: false, env: { "DB" => "" })
+    assert_equal "192.0.2.30", CiDeploy::Hosts.first("DB", required: false, env: { "DB" => "192.0.2.30 192.0.2.31" })
+  end
+
   def test_missing_variable_raises_naming_it
     error = assert_raises(CiDeploy::Hosts::MissingHosts) { CiDeploy::Hosts.list("WORKER_SERVER_IPS", env: {}) }
     assert_includes error.message, "WORKER_SERVER_IPS"

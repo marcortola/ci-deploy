@@ -12,7 +12,20 @@ pin=$pins
 printf '%s\n' "$pin" | grep -Eqx '[0-9a-f]{40}' || { echo "check-remote-pin: $pin is not a full commit SHA" >&2; exit 1; }
 git cat-file -e "$pin^{commit}" 2>/dev/null || { echo "check-remote-pin: $pin is not in this repository's history" >&2; exit 1; }
 
-set -- setup deploy operations dependabot-merge revision-check lib bin Gemfile Gemfile.lock .ruby-version
+# The action code: every directory holding an action.yml (or action.yaml) at HEAD or at the pin,
+# at any depth, so an action added or removed since the pin is compared too; plus lib, bin and
+# the locked bundle. Derived rather than listed, so a new action can never escape the comparison.
+actions=$(for rev in "$pin" HEAD; do git ls-tree -r --name-only "$rev"; done |
+    sed -n 's#^\(.*\)/action\.ya\{0,1\}ml$#\1#p' | sort -u)
+set -- lib bin Gemfile Gemfile.lock .ruby-version
+set -f
+old_ifs=$IFS
+IFS='
+'
+for dir in $actions; do set -- "$@" "$dir"; done
+IFS=$old_ifs
+set +f
+
 if ! git diff --quiet "$pin" HEAD -- "$@"; then
     echo "check-remote-pin: the action code at HEAD differs from the pinned $pin; re-pin $workflow (docs/releasing.md):" >&2
     git diff --stat "$pin" HEAD -- "$@" >&2

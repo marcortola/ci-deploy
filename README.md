@@ -10,7 +10,7 @@ Released under the MIT licence; see `LICENSE`.
 
 | Directory | What it does |
 | --- | --- |
-| `setup/` | Checks out the component at the workflow's commit, installs Ruby 3.3 and the locked Kamal (2.10.0), loads the SSH key, exports variables, secrets and Terraform outputs, copies the Kamal secrets file, puts this revision's helpers on `PATH` and exports `BUNDLE_GEMFILE` and `RUBYLIB` for the rest of the job. |
+| `setup/` | Checks out the component at the workflow's commit, installs Ruby 3.3 and the locked Kamal (2.10.0), loads the SSH key, exports variables, secrets and Terraform outputs, copies the Kamal secrets file, puts this revision's helpers on `PATH` and exports `BUNDLE_GEMFILE` and `RUBYLIB` for the rest of the job. Given the deploy's destination (`report-destination`), it reports its own failure to Rollbar as a failed deploy, since GitHub then skips the deploy action. |
 | `deploy/` | Builds (or checks) one explicit image version, deploys exactly that version, rolls back if the required `rollback` input says so, then always runs cleanup and Rollbar reporting and re-raises the deploy's own result. |
 | `operations/` | The operations catalog: accessories, commands on hosts or in the app, consoles per stack, logs, proxy details, restart and reboot (explicit target only), free Kamal arguments. |
 | `dependabot-merge/` | Merges a Dependabot security fix inside the caret range with an open alert; optionally dispatches the deploy workflow. |
@@ -43,6 +43,7 @@ jobs:
           terraform-workspace: ${{ vars.TF_WORKSPACE_ID }}
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           ssh-user: deploy
+          report-destination: staging   # the deploy's destination: a setup failure reaches Rollbar
 
       - uses: marcortola/ci-deploy/deploy@<sha> # v1.0.0
         with:

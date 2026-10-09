@@ -19,7 +19,9 @@ ci_deploy_symfony new-image "app:messaging:setup"
 
 `CI_DEPLOY_HOOKS_LIB`, `PATH` (this revision's `bin/` first) and `BUNDLE_GEMFILE` are set by the
 setup action, so a hook that calls `kamal` runs the locked Kamal with
-the same bundle as the deploy that started it.
+the same bundle as the deploy that started it. Running Kamal by hand, set them yourself, with
+`CI_DEPLOY_HOOKS_LIB=<ci-deploy checkout>/lib/sh` (see
+[adoption](adoption.md#running-kamal-by-hand-break-glass)).
 
 ## Choosing the container
 

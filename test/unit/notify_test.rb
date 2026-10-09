@@ -57,6 +57,38 @@ class NotifyTest < Minitest::Test
     assert_equal "second", @requests.first[2]["X-Rollbar-Access-Token"]
   end
 
+  def test_token_is_read_from_the_secrets_json_over_the_environment
+    notify(secrets_json: JSON.generate("ROLLBAR_SERVER_TOKEN" => "from-secrets"), env: { "ROLLBAR_SERVER_TOKEN" => "from-env" })
+    assert_equal "from-secrets", @requests.last[2]["X-Rollbar-Access-Token"]
+    notify(secrets_json: JSON.generate("ROLLBAR_ACCESS_TOKEN" => "third", "ROLLBAR_TOKEN" => "first"))
+    assert_equal "first", @requests.last[2]["X-Rollbar-Access-Token"]
+    notify(explicit_token: "explicit", secrets_json: JSON.generate("ROLLBAR_TOKEN" => "from-secrets"))
+    assert_equal "explicit", @requests.last[2]["X-Rollbar-Access-Token"]
+  end
+
+  def test_secrets_json_that_does_not_parse_or_holds_no_string_token_falls_back_to_the_environment
+    ["not json", "[1]", JSON.generate("ROLLBAR_TOKEN" => ""), JSON.generate("ROLLBAR_TOKEN" => { "nested" => "x" }), JSON.generate("OTHER" => "x")].each do |json|
+      @requests.clear
+      notify(secrets_json: json, env: { "ROLLBAR_TOKEN" => "from-env" })
+      assert_equal "from-env", @requests.last[2]["X-Rollbar-Access-Token"], json
+    end
+    @requests.clear
+    assert_equal :skipped, notify(secrets_json: "not json")
+    assert_empty @requests
+  end
+
+  def test_a_setup_failure_is_a_failed_deploy_with_a_critical_item_saying_nothing_was_deployed
+    notify(explicit_token: "t", deploy_result: "setup-failed", rollback_result: "not-attempted")
+    assert_equal "failed", @requests[0][1]["status"]
+    item = @requests[1][1]["data"]
+    assert_equal "critical", item["level"]
+    assert_equal "deploy-failed-example/app-staging", item["fingerprint"]
+    message = item["body"]["message"]["body"]
+    assert_includes message, "setup-failed, rollback: not-attempted"
+    assert_includes message, "nothing was deployed"
+    refute_includes message, "post-deploy step"
+  end
+
   def test_endpoint_can_be_overridden
     notify(explicit_token: "t", env: { "CI_DEPLOY_ROLLBAR_ENDPOINT" => "http://127.0.0.1:9/" })
     assert_equal "http://127.0.0.1:9/api/1/deploy", @requests.first[0]

@@ -122,7 +122,7 @@ a setting; none is decided silently.
 | Terraform output lookup | jq without status checks; status checks and retries; lists as `.value[]` (newlines), `.value[0]` or joined | The checked, retried lookup for everyone; `outputs-map` entries cover each list form. |
 | Host list separator in the configuration | commas, spaces | `CiDeploy::Hosts` accepts both, and newlines. |
 | Kamal environment for later steps | exported to the job in some components | Always exported by setup, so rollback and version reads see it. |
-| Branch and destination pairing | production only from the default branch, that branch only to production; no destination meaning production | `branch-policy` (`enforce` or `off`), `production-branch`, `production-destination`; no destination counts as production. Behaviour change: `enforce` also refuses a checkout whose commit `git rev-parse HEAD` cannot read (`dubious ownership` in container jobs, `checkout: false` without a checkout). |
+| Branch and destination pairing | production only from the default branch, that branch only to production; no destination meaning production | `branch-policy` (`enforce` or `off`), `production-branch`, `production-destination`; no destination counts as production. `enforce` refuses production from any other branch, but lets the production branch deploy to any destination, so staging can be reset to it on demand. Behaviour change: `enforce` also refuses a checkout whose commit `git rev-parse HEAD` cannot read (`dubious ownership` in container jobs, `checkout: false` without a checkout). |
 | Rollbar token variable | several names | `rollbar-token` input, else the first of `ROLLBAR_TOKEN`, `ROLLBAR_SERVER_TOKEN`, `ROLLBAR_ACCESS_TOKEN`, `LOG_ROLLBAR_ACCESS_TOKEN`. |
 | Reporting a failure before the deploy | a single composite that reported setup failures too | Setup's `report-destination` (or `report-environment-name`): a failed setup step is reported as a failed deploy with result `setup-failed`. Its `rollbar-token` input, else the same names, read from the secrets input and then the environment. |
 | Hook runner | console from a fresh container with `bin/console`; Node in the live container (post-deploy) or a fresh one; Python with a `python` prefix and no role filter; one configuration file per environment with no destination | `ci_deploy_exec MODE`, `ci_deploy_symfony`, `ci_deploy_node`, `ci_deploy_python`; `CI_DEPLOY_HOOK_ROLES` (empty for none), `CI_DEPLOY_HOOK_CONFIG`; `-d` only when Kamal sets a destination. |
@@ -140,6 +140,9 @@ a setting; none is decided silently.
   roles no longer in the configuration. Step 9 above is mandatory for that reason.
 - **Prebuilt images need the `service` label.** Kamal refuses an image without
   `LABEL service=<service>`; images built by Kamal carry it, images built elsewhere must add it.
+- **The production branch may deploy to other destinations.** The copies refused the default
+  branch anywhere but production; `enforce` refuses only production from another branch, so a
+  manually dispatched deploy can reset staging to the production branch.
 - **A refused branch/destination pairing reports `refused`** and still sends the Rollbar report.
 - **`branch-policy: enforce` fails closed.** A checkout whose commit git cannot read (a
   `dubious ownership` refusal in a container job, a `checkout: false` job without a checkout) is

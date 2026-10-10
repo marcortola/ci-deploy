@@ -66,12 +66,59 @@ class CliTest < Minitest::Test
     assert_includes output, "Deploy finished with result 'build-failed'"
   end
 
-  def test_branch_policy_violation_reports_refused_and_runs_nothing
+  # Staging is reset to the production branch on demand: enforce guards production only.
+  def test_the_production_branch_deploys_to_staging_under_enforce
+    output, status = step("deploy", { destination: "staging" })
+    assert status.success?, output
+    refute_includes output, "reserved for production"
+    assert_equal "success", @gh.outputs["deploy-result"]
+    assert(@stubs.calls_to("kamal").any? { |args| args.first == "deploy" && args.each_cons(2).include?(%w[-d staging]) })
+    assert_equal "staging", @gh.exported["DEPLOY_ENV"]
+  end
+
+  def test_the_production_branch_to_staging_still_requires_the_workflow_commit
+    @stubs.add("git", "case \"$*\" in \"rev-parse HEAD\") echo #{"f" * 40} ;; esac")
     output, status = step("deploy", { destination: "staging" })
     refute status.success?
-    assert_includes output, "reserved for production"
+    assert_includes output, "not the workflow's commit #{SHA}"
     assert_equal({ "deploy-result" => "refused", "rollback-result" => "not-attempted" }, @gh.outputs)
     assert_empty @stubs.calls_to("kamal")
+  end
+
+  def test_a_feature_branch_deploys_to_staging_under_enforce
+    output, status = step("deploy", { destination: "staging" }, "GITHUB_REF_NAME" => "feature/login")
+    assert status.success?, output
+    assert_equal "success", @gh.outputs["deploy-result"]
+  end
+
+  def test_branch_policy_violation_reports_refused_and_runs_nothing
+    output, status = step("deploy", { destination: "production" }, "GITHUB_REF_NAME" => "feature/login")
+    refute status.success?
+    assert_includes output, "Production deployments are only allowed from the 'main' branch, not 'feature/login'."
+    assert_equal({ "deploy-result" => "refused", "rollback-result" => "not-attempted" }, @gh.outputs)
+    assert_empty @stubs.calls_to("kamal")
+  end
+
+  def test_no_destination_from_a_feature_branch_is_refused_as_production
+    output, status = step("deploy", {}, "GITHUB_REF_NAME" => "feature/login")
+    refute status.success?
+    assert_includes output, "Production deployments are only allowed from the 'main' branch, not 'feature/login'."
+    assert_equal({ "deploy-result" => "refused", "rollback-result" => "not-attempted" }, @gh.outputs)
+    assert_empty @stubs.calls_to("kamal")
+  end
+
+  def test_custom_production_names_are_enforced
+    names = { production_branch: "release", production_destination: "live" }
+    output, status = step("deploy", names.merge(destination: "live"))
+    refute status.success?
+    assert_includes output, "Production deployments are only allowed from the 'release' branch, not 'main'."
+    assert_equal "refused", @gh.outputs["deploy-result"]
+    assert_empty @stubs.calls_to("kamal")
+
+    output, status = step("deploy", names.merge(destination: "staging"), "GITHUB_REF_NAME" => "release")
+    assert status.success?, output
+    output, status = step("deploy", names.merge(destination: "production"), "GITHUB_REF_NAME" => "feature/login")
+    assert status.success?, "with a custom production destination, 'production' is an ordinary destination: #{output}"
   end
 
   def test_the_rollback_policy_is_required

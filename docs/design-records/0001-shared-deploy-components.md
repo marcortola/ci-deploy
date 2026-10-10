@@ -1,6 +1,6 @@
 # 0001 Shared deploy components
 
-Status: Accepted, 2026-10-08; amended 2026-10-08 (scope cut, see [Amendment](#amendment-2026-10-08-scope-cut)); amended 2026-10-09 (break-glass procedure documented, no launcher).
+Status: Accepted, 2026-10-08; amended 2026-10-08 (scope cut, see [Amendment](#amendment-2026-10-08-scope-cut)); amended 2026-10-09 (break-glass procedure documented, no launcher); amended 2026-10-10 (production branch to any destination, see [Amendment](#amendment-2026-10-10-production-branch-to-any-destination)).
 Implementation: phase 1 (this repository); consumers not yet migrated.
 
 ## Context
@@ -91,3 +91,18 @@ Consequences: the revision check no longer compares a vendored file; a component
 setup, deploy and operations actions, the hook helpers, `dependabot-merge` and the revision
 check, and keeps its own toolchain steps. Reintroducing the deferred actions is a new decision
 with its own record.
+
+## Amendment 2026-10-10: production branch to any destination
+
+Approved by the user.
+
+- **Decision.** `branch-policy: enforce` guarantees only that the production destination (or no
+  destination) deploys from the production branch. The rule that refused the production branch
+  for any other destination is removed. The other `enforce` checks are unchanged: the checkout
+  must be the workflow's commit, and a checkout whose commit git cannot read is refused.
+- **Reason.** The consumers retire their long-lived `dev` branch. Staging is deployed only by
+  hand, and resetting it to the production branch on demand is one of those deploys; the removed
+  rule refused exactly that.
+- **Consequence.** A deploy of the production branch to staging (or any non-production
+  destination) now runs under `enforce` instead of being refused. Production is guarded as
+  before. Nothing in a consumer must change, so it ships as a minor release (v1.1.0).

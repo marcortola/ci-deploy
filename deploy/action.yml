@@ -61,13 +61,13 @@ inputs:
     default: ""
   branch-policy:
     description: >-
-      enforce: the production destination deploys only from the production branch, and that branch
-      only to production; the checkout must be the workflow's commit, and a checkout whose commit
-      git cannot read is refused. off: no check.
+      enforce: the production destination deploys only from the production branch, which may also
+      deploy to any other destination (such as staging); the checkout must be the workflow's commit,
+      and a checkout whose commit git cannot read is refused. off: no check.
     required: false
     default: enforce
   production-branch:
-    description: Branch paired with the production destination.
+    description: The only branch the production destination deploys from; it may deploy to any other destination too.
     required: false
     default: main
   production-destination:

@@ -34,7 +34,7 @@ jobs:
           - scenario: build-failure
             fail: build
     steps:
-      - uses: marcortola/ci-deploy/setup@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         with:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10,192.0.2.11","DATABASE_SERVER_IPS":"192.0.2.30"}'
@@ -54,7 +54,7 @@ jobs:
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/deploy@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/deploy@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         id: deploy
         continue-on-error: true
         env:
@@ -83,7 +83,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: marcortola/ci-deploy/setup@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         with:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10","DATABASE_SERVER_IPS":"192.0.2.30"}'
@@ -93,20 +93,20 @@ jobs:
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/operations@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/operations@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         with:
           operation: kamal
           args: app exec --reuse "echo 'semi;colon' $(id -u) | wc -c"
           destination: staging
 
-      - uses: marcortola/ci-deploy/operations@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/operations@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         id: untargeted
         continue-on-error: true
         with:
           operation: proxy-reboot
           destination: staging
 
-      - uses: marcortola/ci-deploy/operations@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/operations@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         with:
           operation: proxy-reboot
           hosts: 192.0.2.10
@@ -170,7 +170,7 @@ jobs:
           (exec 3<>/dev/tcp/127.0.0.1/18765)
           echo "CI_DEPLOY_ROLLBAR_ENDPOINT=http://127.0.0.1:18765" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/setup@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         id: setup
         continue-on-error: true
         with:
@@ -207,6 +207,6 @@ jobs:
 
       # This repository's own docs and tests reference it, so the check runs on a synthetic
       # consumer pinned to the same commit.
-      - uses: marcortola/ci-deploy/revision-check@3d9daebddb8e2db84f0d8320cbd4e2a1f290b2d4 # fix-pre-v1
+      - uses: marcortola/ci-deploy/revision-check@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
         with:
           component: test/fixtures/revision-consumer

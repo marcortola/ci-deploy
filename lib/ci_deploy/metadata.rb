@@ -4,9 +4,9 @@ require "time"
 
 module CiDeploy
   # Deploy metadata the configurations read (GIT_BRANCH, GIT_COMMIT, GIT_COMMIT_SHORT,
-  # DEPLOY_TIMESTAMP, DEPLOY_ENV), and the guard that keeps the production branch and the
-  # production destination paired: production deploys only from the production branch, and the
-  # production branch deploys only to production.
+  # DEPLOY_TIMESTAMP, DEPLOY_ENV), and the guard that production deploys only from the production
+  # branch. The production branch may deploy to any destination, so a non-production destination
+  # such as staging can be reset to it on demand.
   class Metadata
     POLICIES = %w[enforce off].freeze
 
@@ -33,9 +33,6 @@ module CiDeploy
       production = @destination.empty? || @destination == @production_destination
       if production && @branch != @production_branch
         raise PolicyViolation, "Production deployments are only allowed from the '#{@production_branch}' branch, not '#{@branch}'."
-      end
-      if !production && @branch == @production_branch
-        raise PolicyViolation, "The '#{@production_branch}' branch is reserved for production and cannot be deployed to '#{@destination}'."
       end
     end
 

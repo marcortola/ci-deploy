@@ -1,7 +1,7 @@
 # 0001 Shared deploy components
 
 Status: Accepted, 2026-10-08; amended 2026-10-08 (scope cut, see [Amendment](#amendment-2026-10-08-scope-cut)); amended 2026-10-09 (break-glass procedure documented, no launcher); amended 2026-10-10 (production branch to any destination, see [Amendment](#amendment-2026-10-10-production-branch-to-any-destination)).
-Implementation: phase 1 (this repository); consumers not yet migrated.
+Implementation: phase 1 (this repository); consumers migrated to v1.0.0 on 2026-10-09.
 
 ## Context
 
@@ -105,4 +105,13 @@ Approved by the user.
   rule refused exactly that.
 - **Consequence.** A deploy of the production branch to staging (or any non-production
   destination) now runs under `enforce` instead of being refused. Production is guarded as
-  before. Nothing in a consumer must change, so it ships as a minor release (v1.1.0).
+  before only when `production-destination` names the production destination exactly: the
+  removed rule also caught a misnamed one, by refusing the production branch's first deploy to
+  it, and now nothing does. The branch no longer implies the environment, so a consumer must
+  select its GitHub environment and hook behaviour by destination. Nothing that succeeded before
+  fails, so it ships as a minor release (v1.1.0).
+- **Alternative rejected.** Keep the rule and set `branch-policy: off` on the manual staging
+  deploy: `off` also drops the workflow-commit check and the no-destination guard.
+- **Evidence limits.** Covered by the unit and CLI-process tests. The remote-consumption workflow
+  runs on pull requests, whose ref is never the production branch, so no remote run exercises a
+  production-branch deploy to staging.

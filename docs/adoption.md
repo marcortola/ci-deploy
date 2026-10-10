@@ -65,7 +65,10 @@ phases and their order stay in the component.
 6. **Replace the deploy.** One `deploy` step replaces version capture, build, deploy, rollback,
    metadata, cleanup and Rollbar reporting. `rollback` is required (`auto` or `off`): carry over
    the component's current behaviour, `auto` where it rolled back automatically. Choose
-   `build-mode` and the branch policy explicitly (see the divergences below).
+   `build-mode` and the branch policy explicitly (see the divergences below). Under `enforce`,
+   `production-destination` must be the exact Kamal destination that reaches the production hosts:
+   the policy guards only that name and a deploy without a destination, so a production
+   destination named anything else (`prod`, `Production`) is not guarded at all.
 7. **Port the hooks.** Source `lib/sh/hooks.sh` and replace the component's helper calls with
    `ci_deploy_exec MODE CMD` or a stack wrapper, choosing `new-image` or `live-container` for each
    command (see [hooks](hooks.md)). Keep each hook's commands, order and failure handling. Replace
@@ -142,7 +145,10 @@ a setting; none is decided silently.
   `LABEL service=<service>`; images built by Kamal carry it, images built elsewhere must add it.
 - **The production branch may deploy to other destinations.** The copies refused the default
   branch anywhere but production; `enforce` refuses only production from another branch, so a
-  manually dispatched deploy can reset staging to the production branch.
+  manually dispatched deploy can reset staging to the production branch. The branch no longer
+  implies the environment: choose the GitHub environment, secrets and any destination-specific
+  hook behaviour from the destination (`KAMAL_DESTINATION`, `DEPLOY_ENV` or the workflow's
+  destination input), never from `GITHUB_REF_NAME` or `GIT_BRANCH`.
 - **A refused branch/destination pairing reports `refused`** and still sends the Rollbar report.
 - **`branch-policy: enforce` fails closed.** A checkout whose commit git cannot read (a
   `dubious ownership` refusal in a container job, a `checkout: false` job without a checkout) is

@@ -50,12 +50,17 @@ jobs:
           destination: staging
           rollback: "off"   # required: auto or off
 
-  revision:
+  quality-gate:   # the CI job every pull request runs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<sha> # v7.0.1
       - uses: marcortola/ci-deploy/revision-check@<sha> # v1.0.0
+      # ... the component's install, lint and test steps
 ```
+
+Run `revision-check` as a step of the job every pull request already runs, right after its
+checkout, rather than as a job of its own: it takes seconds, and a separate job bills a full runner
+minute on every run.
 
 Each action's `action.yml` documents its inputs and outputs. The guides:
 

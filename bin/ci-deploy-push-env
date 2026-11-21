@@ -1,0 +1,102 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Uploads each app role's secret env file to its hosts, for the deploy step to run immediately
+# before `kamal deploy`:
+#
+#   ci-deploy-push-env -c CONFIG [-d DESTINATION] --version=VERSION [--skip-hooks]
+#
+# Kamal 2.10 runs the pre-deploy hook before `app boot` uploads the env files, so a hook's
+# `kamal app exec` in a new container (--env-file <role>.env) would read the previous deploy's
+# secrets. This adds a hidden `kamal app boot_env` command with the body of the upstream fix
+# (basecamp/kamal#1870) and runs it through Kamal's own CLI, so the pre-connect hook, SSH setup,
+# secret resolution and the deploy lock are Kamal's: a held lock fails before any file is touched.
+# It starts Kamal::Cli::App, not Kamal::Cli::Main with `app` first: Thor hands the options Main
+# parses to a subcommand only as class_options, so `--skip-hooks` would not reach Kamal's hook
+# check and the pre-connect hook would run anyway. Accessory env files are not uploaded. See
+# docs/design-records/0002-push-env-before-deploy.md, which also says when to remove this.
+#
+# Needs BUNDLE_GEMFILE (this revision's Gemfile), as the setup action exports it. Exits 64 on a
+# usage error and 1 when Kamal fails, with the error on stderr. It prints no secret value.
+
+require "optparse"
+
+module CiDeploy
+  module PushEnv
+    USAGE = "usage: ci-deploy-push-env -c CONFIG [-d DESTINATION] --version=VERSION [--skip-hooks]"
+
+    module_function
+
+    # The `kamal app` arguments for this script's own. Raises OptionParser::ParseError on a usage
+    # error.
+    def app_argv(argv)
+      options = {}
+      parser = OptionParser.new do |opts|
+        opts.banner = USAGE
+        opts.on("-c", "--config-file CONFIG") { |value| options[:config] = value }
+        opts.on("-d", "--destination DESTINATION") { |value| options[:destination] = value }
+        opts.on("--version VERSION") { |value| options[:version] = value }
+        opts.on("-H", "--skip-hooks") { options[:skip_hooks] = true }
+      end
+      rest = parser.parse(argv)
+      raise OptionParser::NeedlessArgument, rest.join(" ") unless rest.empty?
+      raise OptionParser::MissingArgument, "-c CONFIG" if options[:config].to_s.empty?
+      raise OptionParser::MissingArgument, "--version VERSION" if options[:version].to_s.empty?
+
+      args = ["boot_env", "-c", options[:config]]
+      args += ["-d", options[:destination]] unless options[:destination].to_s.empty?
+      args << "--version=#{options[:version]}"
+      args << "--skip-hooks" if options[:skip_hooks]
+      args
+    end
+
+    # basecamp/kamal#1870's `app boot_env`, inside Kamal's deploy lock. Each role's env file is
+    # written as `app boot` writes it (cli/app/boot.rb), with the host passed the same way.
+    def define_command!
+      Kamal::Cli::App.class_eval do
+        desc "boot_env", "Upload each app role's env file to its hosts (ci-deploy)", hide: true
+        def boot_env
+          with_lock do
+            on(KAMAL.app_hosts) do |host|
+              KAMAL.roles_on(host).each do |role|
+                execute(*KAMAL.app(role: role, host: host).ensure_env_directory)
+                upload! role.secrets_io(host), role.secrets_path, mode: "0600"
+              end
+            end
+          end
+        end
+      end
+    end
+
+    def run(argv)
+      args = begin
+        app_argv(argv)
+      rescue OptionParser::ParseError => e
+        warn "ci-deploy-push-env: #{e.message}"
+        warn USAGE
+        return 64
+      end
+      if ENV.fetch("BUNDLE_GEMFILE", "").empty?
+        warn "ci-deploy-push-env: BUNDLE_GEMFILE is not set; run the setup action first"
+        return 1
+      end
+
+      require "bundler/setup"
+      require "kamal"
+      define_command!
+      # As Kamal's own executable: report a failure once, not again from each SSH thread.
+      Thread.report_on_exception = false
+      Kamal::Cli::App.start(args)
+      0
+    rescue StandardError => e
+      remote = defined?(SSHKit::Runner::ExecuteError) && e.is_a?(SSHKit::Runner::ExecuteError) && e.cause
+      warn "  ERROR (#{remote ? e.cause.class : e.class}): #{e.message}"
+      1
+    end
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  $stdout.sync = true
+  exit CiDeploy::PushEnv.run(ARGV)
+end

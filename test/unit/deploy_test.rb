@@ -29,8 +29,14 @@ class DeployTest < Minitest::Test
     outcome
   end
 
+  # The env push writes to every app host, so it counts as a mutation.
+  def push_calls
+    @runner.calls.select { |argv| argv.first == CiDeploy::Deploy::PUSH_ENV }.map { |argv| argv.drop(1) }
+  end
+
   def remote_mutations
-    @runner.kamal_calls.select { |args| MUTATING.any? { |verb| args.join(" ").start_with?(verb) } }
+    @runner.kamal_calls.select { |args| MUTATING.any? { |verb| args.join(" ").start_with?(verb) } } +
+      push_calls.map { |args| [CiDeploy::Deploy::PUSH_ENV, *args] }
   end
 
   def test_builds_and_deploys_one_version_with_config_and_destination
@@ -40,10 +46,11 @@ class DeployTest < Minitest::Test
 
     assert outcome.success?
     assert_equal [
-      ["app", "version", "-c", "etc/kamal/deploy.yml", "-d", "staging"],
-      ["build", "push", "--version=#{SHA}", "-c", "etc/kamal/deploy.yml", "-d", "staging"],
-      ["deploy", "--skip-push", "--version=#{SHA}", "-c", "etc/kamal/deploy.yml", "-d", "staging"]
-    ], @runner.kamal_calls
+      ["kamal", "app", "version", "-c", "etc/kamal/deploy.yml", "-d", "staging"],
+      ["kamal", "build", "push", "--version=#{SHA}", "-c", "etc/kamal/deploy.yml", "-d", "staging"],
+      ["ci-deploy-push-env", "-c", "etc/kamal/deploy.yml", "-d", "staging", "--version=#{SHA}"],
+      ["kamal", "deploy", "--skip-push", "--version=#{SHA}", "-c", "etc/kamal/deploy.yml", "-d", "staging"]
+    ], @runner.calls.reject { |argv| argv.first == "git" }
     assert_equal({ "version" => SHA, "previous-version" => PREVIOUS, "deploy-result" => "success",
                    "rollback-result" => "not-needed", "image" => "" }, @gh.outputs)
   end
@@ -278,7 +285,7 @@ class DeployTest
     deploy(before_deploy: %w[ci-deploy-host-control --command /usr/local/sbin/example-control pause], skip_hooks: true)
 
     order = @runner.calls.reject { |argv| argv.first == "git" }.map { |argv| argv.first(2) }
-    assert_equal [%w[kamal app], %w[kamal build], %w[ci-deploy-host-control --command], %w[kamal deploy]], order
+    assert_equal [%w[kamal app], %w[kamal build], %w[ci-deploy-host-control --command], %w[ci-deploy-push-env -c], %w[kamal deploy]], order
   end
 
   def test_before_deploy_command_does_not_run_when_the_build_fails
@@ -296,6 +303,85 @@ class DeployTest
     assert_equal "before-deploy-failed", outcome.deploy_result
     assert_equal "not-attempted", outcome.rollback_result
     refute(@runner.kamal_calls.any? { |args| %w[deploy rollback].include?(args.first) })
+    assert_empty push_calls, "a failed before-deploy command pushes no env file"
+  end
+end
+
+# The env push: each app role's secret env file reaches its hosts before kamal deploy runs the
+# pre-deploy hook (design record 0002).
+class DeployTest
+  def test_env_push_runs_after_the_build_immediately_before_kamal_deploy_with_the_deploy_arguments
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+
+    deploy(version: "release-42")
+
+    calls = @runner.calls
+    push = calls.index { |argv| argv.first == "ci-deploy-push-env" }
+    refute_nil push
+    assert_equal ["ci-deploy-push-env", "-c", "etc/kamal/deploy.yml", "-d", "staging", "--version=release-42"], calls[push]
+    assert_equal %w[kamal build], calls[push - 1].first(2)
+    assert_equal %w[kamal deploy], calls[push + 1].first(2)
+    assert_equal({}, @runner.envs[push], "the push runs with the environment the kamal calls get")
+  end
+
+  def test_env_push_names_the_version_drawn_once_for_a_dirty_tree
+    @runner.on(%w[git status --porcelain], output: " M app.rb\n")
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+
+    outcome = deploy
+
+    assert_equal ["--version=#{outcome.version}"], push_calls.flatten.grep(/\A--version=/)
+    assert_match(/_uncommitted_/, outcome.version)
+  end
+
+  def test_env_push_without_a_destination_passes_no_destination
+    @kamal = CiDeploy::Kamal.new(runner: @runner, config: "etc/kamal/deploy.yml")
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+
+    deploy
+
+    assert_equal [["-c", "etc/kamal/deploy.yml", "--version=#{SHA}"]], push_calls
+  end
+
+  def test_failed_env_push_stops_the_deploy_and_rolls_nothing_back
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+    @runner.on(%w[ci-deploy-push-env], status: 1, output: "  ERROR (Kamal::Cli::LockError): Deploy lock found.\n")
+    deployer = CiDeploy::Deploy.new(kamal: @kamal, runner: @runner, github: @gh.github, rollback: "auto")
+
+    outcome = nil
+    capture_stdout { outcome = deployer.call }
+
+    refute outcome.success?
+    assert_equal "env-push-failed", outcome.deploy_result
+    assert_equal "not-attempted", outcome.rollback_result
+    refute(@runner.kamal_calls.any? { |args| %w[deploy rollback].include?(args.first) })
+    assert_equal 1, push_calls.size, "the push is not retried"
+    refute deployer.deploy_started?, "kamal deploy never ran, so no rollback state is unknown"
+    assert_equal({ "version" => SHA, "previous-version" => PREVIOUS, "deploy-result" => "env-push-failed",
+                   "rollback-result" => "not-attempted", "image" => "" }, @gh.outputs)
+    assert_includes @gh.log, "::error::Pushing the env files exited with status 1, so kamal deploy did not run"
+  end
+
+  def test_skip_hooks_pushes_with_skip_hooks
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+
+    deploy(skip_hooks: true)
+
+    assert_equal [["-c", "etc/kamal/deploy.yml", "-d", "staging", "--version=#{SHA}", "--skip-hooks"]], push_calls
+    assert_includes @runner.kamal_calls, ["deploy", "--skip-push", "--version=#{SHA}", "--skip-hooks", "-c", "etc/kamal/deploy.yml", "-d", "staging"]
+  end
+
+  def test_prebuilt_mode_pushes_after_the_image_check_and_before_kamal_deploy
+    @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
+    @runner.on(%w[kamal config], prebuilt_config("127.0.0.1:5555/example/app:release-7"))
+
+    outcome = deploy(mode: "prebuilt", version: "release-7")
+
+    assert outcome.success?
+    order = @runner.calls.map(&:first).reject { |program| program == "git" }
+    assert_operator order.index("docker"), :<, order.index("ci-deploy-push-env")
+    assert_equal [["-c", "etc/kamal/deploy.yml", "-d", "staging", "--version=release-7"]], push_calls
+    assert_equal %w[kamal deploy], @runner.calls[@runner.calls.index { |argv| argv.first == "ci-deploy-push-env" } + 1].first(2)
   end
 end
 

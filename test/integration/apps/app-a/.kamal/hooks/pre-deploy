@@ -1,6 +1,10 @@
 #!/bin/sh
-# Integration hook: proves a nested hook reaches the same kamal and bundle as the deploy, and runs a
-# command from the incoming image through the shared helper.
+# Integration hook: proves a nested hook reaches the same kamal and bundle as the deploy, and runs
+# commands from the incoming image. A new container on each server reads a secret, which must be
+# this deploy's value on both, since the env files are pushed to every host before the hook runs:
+# on the primary through the shared helper, on the second server (127.0.0.3) through `kamal app
+# exec --hosts`, resolving the configuration and destination as the helper does. Each server's
+# output is prefixed so the log tells them apart.
 set -eu
 # shellcheck source=lib/sh/hooks.sh
 . "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
@@ -11,4 +15,15 @@ set -eu
     echo "bundle=${BUNDLE_GEMFILE:-}"
     echo "version=$KAMAL_VERSION"
 } >> "${IT_HOOK_LOG:?}"
+
+primary=$(ci_deploy_exec new-image "printenv IT_SECRET")
+printf '%s\n' "$primary" | sed 's/^/primary: /' >> "$IT_HOOK_LOG"
+
+set -- -c "${CI_DEPLOY_HOOK_CONFIG:-${CI_DEPLOY_CONFIG:-./etc/kamal/deploy.yml}}"
+if [ -n "${KAMAL_DESTINATION:-}" ]; then
+    set -- "$@" -d "$KAMAL_DESTINATION"
+fi
+second=$(kamal app exec --hosts 127.0.0.3 --roles=web "$@" --version "$KAMAL_VERSION" "printenv IT_SECRET")
+printf '%s\n' "$second" | sed 's/^/second: /' >> "$IT_HOOK_LOG"
+
 ci_deploy_exec new-image "cat /www/up" >> "$IT_HOOK_LOG"

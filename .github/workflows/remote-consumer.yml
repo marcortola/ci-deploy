@@ -4,9 +4,10 @@ name: Remote consumption
 # from this checkout. The pin is the newest commit that changed an action or its scripts; bump it
 # in the same pull request whenever one does, together with test/fixtures/revision-consumer (the
 # release procedure in docs/releasing.md). CI's script/check-remote-pin fails while it is stale.
-# Kamal is replaced by test/remote/kamal, which records its calls, so the scenarios check the
-# action wiring: one version, outputs, rollback, cleanup and reporting after a failure, the
-# re-raised result, and setup reporting its own failure to a local stand-in for Rollbar.
+# Kamal is replaced by test/remote/kamal and the env push by test/remote/ci-deploy-push-env, which
+# record their calls, so the scenarios check the action wiring: one version, the env push right
+# before the deploy, outputs, rollback, cleanup and reporting after a failure, the re-raised
+# result, and setup reporting its own failure to a local stand-in for Rollbar.
 
 on:
   pull_request:
@@ -34,7 +35,7 @@ jobs:
           - scenario: build-failure
             fail: build
     steps:
-      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/setup@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         with:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10,192.0.2.11","DATABASE_SERVER_IPS":"192.0.2.30"}'
@@ -49,12 +50,12 @@ jobs:
           grep -q '192.0.2.11' "$RUNNER_TEMP/config.yml"
           test "$(printf '%s' "$REGISTRY_PASSWORD" | wc -l)" -eq 1
 
-      - name: Put the recording Kamal first on PATH
+      - name: Put the recording Kamal and env push first on PATH
         run: |
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/deploy@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/deploy@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         id: deploy
         continue-on-error: true
         env:
@@ -83,30 +84,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/setup@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         with:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10","DATABASE_SERVER_IPS":"192.0.2.30"}'
 
-      - name: Put the recording Kamal first on PATH
+      - name: Put the recording Kamal and env push first on PATH
         run: |
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/operations@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/operations@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         with:
           operation: kamal
           args: app exec --reuse "echo 'semi;colon' $(id -u) | wc -c"
           destination: staging
 
-      - uses: marcortola/ci-deploy/operations@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/operations@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         id: untargeted
         continue-on-error: true
         with:
           operation: proxy-reboot
           destination: staging
 
-      - uses: marcortola/ci-deploy/operations@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/operations@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         with:
           operation: proxy-reboot
           hosts: 192.0.2.10
@@ -170,7 +171,7 @@ jobs:
           (exec 3<>/dev/tcp/127.0.0.1/18765)
           echo "CI_DEPLOY_ROLLBAR_ENDPOINT=http://127.0.0.1:18765" >> "$GITHUB_ENV"
 
-      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/setup@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         id: setup
         continue-on-error: true
         with:
@@ -207,6 +208,6 @@ jobs:
 
       # This repository's own docs and tests reference it, so the check runs on a synthetic
       # consumer pinned to the same commit.
-      - uses: marcortola/ci-deploy/revision-check@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/revision-check@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         with:
           component: test/fixtures/revision-consumer

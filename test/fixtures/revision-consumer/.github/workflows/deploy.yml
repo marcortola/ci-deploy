@@ -10,7 +10,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: marcortola/ci-deploy/setup@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
-      - uses: marcortola/ci-deploy/deploy@9446291615d40a1dacdef9daa7c8725cfdcd36cb # allow-main-to-staging
+      - uses: marcortola/ci-deploy/setup@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
+      - uses: marcortola/ci-deploy/deploy@db5559d72d30aac74ffca5fa3b80af88df45b563 # feat-push-env-before-deploy
         with:
           rollback: auto

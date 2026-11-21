@@ -121,6 +121,7 @@ a setting; none is decided silently.
 | Rollback verification | exit status only; exit status, missing-container text and every host's version | Always the full verification. |
 | Rollback target | first version seen; first version excluding `_replaced_` and the version being deployed | Always the latter, published only after the image exists. |
 | Skipping hooks | supported in one component | `skip-hooks` input, warned. |
+| Secrets in pre-deploy hooks | a hook's new container read the previous deploy's env file (Kamal uploads it only at boot) | The deploy pushes every app role's env file right before `kamal deploy`, also with `skip-hooks`; a failed push stops the deploy as `env-push-failed`. |
 | Pausing a service around a rollout | a pause before the deploy and a resume after it, in one component | `before-deploy-command` (runs after the build, even with `skip-hooks`; failure stops the deploy) and `cleanup-command` (always runs; failure only warns), usually with `ci-deploy-host-control`. |
 | Terraform output lookup | jq without status checks; status checks and retries; lists as `.value[]` (newlines), `.value[0]` or joined | The checked, retried lookup for everyone; `outputs-map` entries cover each list form. |
 | Host list separator in the configuration | commas, spaces | `CiDeploy::Hosts` accepts both, and newlines. |
@@ -153,6 +154,13 @@ a setting; none is decided silently.
 - **`branch-policy: enforce` fails closed.** A checkout whose commit git cannot read (a
   `dubious ownership` refusal in a container job, a `checkout: false` job without a checkout) is
   refused (`refused`) instead of deployed unchecked. Fix the checkout, or set `branch-policy: off`.
+- **Each deploy pushes the env files before `kamal deploy`.** Pre-deploy hooks' `new-image`
+  containers now read this deploy's secrets, not the previous deploy's. Kamal resolves the secrets
+  once more for the push, so adapter-backed secrets are fetched twice per deploy, and runs the
+  pre-connect hook once more (with `KAMAL_COMMAND=app`, `KAMAL_SUBCOMMAND=boot_env`; not with
+  `skip-hooks`), so that hook must tolerate running twice. A failed push stops the deploy as
+  `env-push-failed` with nothing rolled back
+  ([design record 0002](design-records/0002-push-env-before-deploy.md)).
 
 ## Running Kamal by hand (break-glass)
 
@@ -188,4 +196,14 @@ without `CI_DEPLOY_HOOKS_LIB` every hook that sources the helpers stops at its f
 without `CI_DEPLOY_CONFIG` the helpers use `./etc/kamal/deploy.yml`. A
 deploy run this way gets none of the deploy action's guards (one explicit version, the branch
 policy, rollback verification, Rollbar reporting): pass `--version` explicitly and report the
-outcome by hand.
+outcome by hand. Nor does it push the env files first: only the deploy action does, so a
+`kamal deploy`, `kamal redeploy` or `kamal rollback` run by hand, or through the operations
+action's free `kamal` arguments, leaves a pre-deploy hook's `new-image` container reading the
+previous deploy's secrets. Push them with the same arguments, then deploy. `--skip-push` needs
+the image already in the registry; if it is not, run `kamal build push -c etc/kamal/deploy.yml
+-d staging --version=<version>` first:
+
+```sh
+ci-deploy-push-env -c etc/kamal/deploy.yml -d staging --version=<version>
+kamal deploy --skip-push -c etc/kamal/deploy.yml -d staging --version=<version>
+```

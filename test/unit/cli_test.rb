@@ -16,6 +16,7 @@ class CliTest < Minitest::Test
     @stubs = TestSupport::Stubs.new(tmpdir)
     @stubs.add("git", "case \"$*\" in \"rev-parse HEAD\") echo #{SHA} ;; esac")
     kamal(build: 0, deploy: 0)
+    @stubs.add("ci-deploy-push-env")
   end
 
   def teardown = @gh.cleanup
@@ -52,6 +53,28 @@ class CliTest < Minitest::Test
     assert_equal "success", @gh.outputs["deploy-result"]
     _output, status = step("finish", result: "success", rollback_result: "not-needed")
     assert status.success?
+  end
+
+  # The push is found on PATH by name, as the setup action puts this revision's bin/ there.
+  def test_deploy_pushes_the_env_files_right_before_kamal_deploy
+    output, status = step("deploy", { destination: "staging" })
+    assert status.success?, output
+    calls = @stubs.calls.reject { |call| call.first == "git" }.map { |call| call.first(3) }
+    assert_equal [%w[kamal app version], %w[kamal build push], %w[ci-deploy-push-env -c etc/kamal/deploy.yml], %w[kamal deploy --skip-push]], calls
+    assert_equal [["-c", "etc/kamal/deploy.yml", "-d", "staging", "--version=#{SHA}"]], @stubs.calls_to("ci-deploy-push-env")
+  end
+
+  def test_failed_env_push_fails_the_step_without_a_deploy_and_finish_keeps_the_failure
+    @stubs.add("ci-deploy-push-env", "exit 1")
+    _output, status = step("deploy", rollback: "auto")
+    refute status.success?
+    assert_equal({ "deploy-result" => "env-push-failed", "rollback-result" => "not-attempted" },
+                 @gh.outputs.slice("deploy-result", "rollback-result"))
+    refute(@stubs.calls_to("kamal").any? { |args| %w[deploy rollback].include?(args.first) })
+
+    output, status = step("finish", result: "env-push-failed", rollback_result: "not-attempted")
+    refute status.success?
+    assert_includes output, "Deploy finished with result 'env-push-failed'"
   end
 
   def test_failed_build_only_reads_from_hosts_and_finish_keeps_the_failure

@@ -10,7 +10,7 @@ shellcheck -x \
     test/fixtures/hooks/*/* \
     test/integration/*.sh test/integration/host/entrypoint.sh \
     test/integration/apps/*/.kamal/hooks/* \
-    test/remote/kamal test/remote/assert.sh
+    test/remote/kamal test/remote/ci-deploy-push-env test/remote/assert.sh
 
 actionlint
 # actionlint checks workflows; composite actions are checked through the workflows that use them

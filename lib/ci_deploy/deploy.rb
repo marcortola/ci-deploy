@@ -19,14 +19,21 @@ module CiDeploy
   #    live container under this commit's environment for nothing.
   # 4. Only then does anything touch the hosts: the optional before-deploy command (for example
   #    pausing a service that competes with the rollout; it runs even with --skip-hooks, and its
-  #    failure stops the deploy), then `kamal deploy --skip-push`.
-  # 5. A failed deploy is rolled back only when the policy is `auto`. Repositories whose hooks run
+  #    failure stops the deploy), then the env push, then `kamal deploy --skip-push`.
+  # 5. The env push (`ci-deploy-push-env`, also under --skip-hooks) uploads each app role's secret
+  #    env file, inside Kamal's deploy lock, right before `kamal deploy`. Kamal 2.10 uploads it only
+  #    when it boots the app, after the pre-deploy hook, so without the push a hook's new-container
+  #    `kamal app exec` would read the previous deploy's secrets. Its failure stops the deploy with
+  #    nothing to roll back: running containers do not reread the file, so the serving version
+  #    keeps the environment it started with (design record 0002).
+  # 6. A failed deploy is rolled back only when the policy is `auto`. Repositories whose hooks run
   #    schema migrations keep it `off`: code that predates an applied migration can leave things
   #    worse than the failed deploy did.
   class Deploy
     MODES = %w[kamal prebuilt].freeze
     ROLLBACK_POLICIES = %w[auto off].freeze
     VERSION_FORMAT = /\A[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}\z/
+    PUSH_ENV = "ci-deploy-push-env"
 
     Outcome = Struct.new(:version, :previous_version, :deploy_result, :rollback_result, :image, keyword_init: true) do
       def success? = deploy_result == "success"
@@ -80,9 +87,16 @@ module CiDeploy
         end
       end
 
+      @github.warning("Deploying with --skip-hooks: the pre-deploy and post-deploy hooks will not run.") if @skip_hooks
+      push = @runner.run(*push_env_argv(version))
+      unless push.success?
+        return finish(outcome, "env-push-failed",
+                      "Pushing the env files exited with status #{push.status}, so kamal deploy did not run and nothing is rolled back. " \
+                      "Hosts it reached may hold this deploy's env file; the serving containers keep the environment they started with.")
+      end
+
       deploy_args = ["deploy", "--skip-push", "--version=#{version}"]
       deploy_args << "--skip-hooks" if @skip_hooks
-      @github.warning("Deploying with --skip-hooks: the pre-deploy and post-deploy hooks will not run.") if @skip_hooks
       @deploy_started = true
       deploy = @kamal.run(*deploy_args)
       if deploy.success?
@@ -99,6 +113,15 @@ module CiDeploy
     def deploy_started? = @deploy_started == true
 
     private
+
+    # The deploy's configuration, destination and version; see step 5 above.
+    def push_env_argv(version)
+      argv = [PUSH_ENV, "-c", @kamal.config]
+      argv += ["-d", @kamal.destination] unless @kamal.destination.empty?
+      argv << "--version=#{version}"
+      argv << "--skip-hooks" if @skip_hooks
+      argv
+    end
 
     def finish(outcome, result, message)
       outcome.deploy_result = result

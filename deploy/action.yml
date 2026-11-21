@@ -16,7 +16,7 @@ inputs:
     default: ""
   build-mode:
     description: >-
-      kamal: `kamal build push` then `kamal deploy --skip-push`, both with one version.
+      kamal: `kamal build push`, the env push, then `kamal deploy --skip-push`, all with one version.
       prebuilt: deploy an image already in the registry; refuses to start if it is not published.
     required: false
     default: kamal
@@ -35,7 +35,7 @@ inputs:
       cannot run against.
     required: true
   skip-hooks:
-    description: Pass --skip-hooks to kamal deploy. Only for the documented env-file deadlock; never a default.
+    description: Pass --skip-hooks to kamal deploy and the env push before it, so no Kamal hook runs. Never a default.
     required: false
     default: "false"
   before-deploy-command:
@@ -84,8 +84,9 @@ outputs:
     value: ${{ steps.deploy.outputs.previous-version }}
   deploy-result:
     description: >-
-      success, build-failed, image-missing, before-deploy-failed, deploy-failed, refused or error (an
-      invalid input or an unexpected failure of the step); empty if the deploy step did not complete.
+      success, build-failed, image-missing, before-deploy-failed, env-push-failed (the env files could
+      not be pushed, so kamal deploy did not run), deploy-failed, refused or error (an invalid input
+      or an unexpected failure of the step); empty if the deploy step did not complete.
     value: ${{ steps.deploy.outputs.deploy-result }}
   rollback-result:
     description: >-

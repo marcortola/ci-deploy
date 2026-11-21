@@ -156,8 +156,10 @@ a setting; none is decided silently.
   refused (`refused`) instead of deployed unchecked. Fix the checkout, or set `branch-policy: off`.
 - **Each deploy pushes the env files before `kamal deploy`.** Pre-deploy hooks' `new-image`
   containers now read this deploy's secrets, not the previous deploy's. Kamal resolves the secrets
-  once more for the push, so adapter-backed secrets are fetched twice per deploy, and a failed
-  push stops the deploy as `env-push-failed` with nothing rolled back
+  once more for the push, so adapter-backed secrets are fetched twice per deploy, and runs the
+  pre-connect hook once more (with `KAMAL_COMMAND=app`, `KAMAL_SUBCOMMAND=boot_env`; not with
+  `skip-hooks`), so that hook must tolerate running twice. A failed push stops the deploy as
+  `env-push-failed` with nothing rolled back
   ([design record 0002](design-records/0002-push-env-before-deploy.md)).
 
 ## Running Kamal by hand (break-glass)
@@ -194,9 +196,12 @@ without `CI_DEPLOY_HOOKS_LIB` every hook that sources the helpers stops at its f
 without `CI_DEPLOY_CONFIG` the helpers use `./etc/kamal/deploy.yml`. A
 deploy run this way gets none of the deploy action's guards (one explicit version, the branch
 policy, rollback verification, Rollbar reporting): pass `--version` explicitly and report the
-outcome by hand. Nor does it push the env files first, so a pre-deploy hook's `new-image`
-container would read the previous deploy's secrets. Push them with the same arguments, then
-deploy:
+outcome by hand. Nor does it push the env files first: only the deploy action does, so a
+`kamal deploy`, `kamal redeploy` or `kamal rollback` run by hand, or through the operations
+action's free `kamal` arguments, leaves a pre-deploy hook's `new-image` container reading the
+previous deploy's secrets. Push them with the same arguments, then deploy. `--skip-push` needs
+the image already in the registry; if it is not, run `kamal build push -c etc/kamal/deploy.yml
+-d staging --version=<version>` first:
 
 ```sh
 ci-deploy-push-env -c etc/kamal/deploy.yml -d staging --version=<version>

@@ -36,8 +36,9 @@ Both modes read this deploy's secrets. Kamal 2.10 uploads a role's secret env fi
 `kamal deploy` boots the app, after the pre-deploy hook, so a `new-image` container there would
 start with the previous deploy's env file. The deploy action therefore pushes the env files
 (`ci-deploy-push-env`) right before `kamal deploy`, also with `skip-hooks`; see
-[design record 0002](design-records/0002-push-env-before-deploy.md). A `kamal deploy` run by hand
-does not push them: run the push first (see
+[design record 0002](design-records/0002-push-env-before-deploy.md). Only the deploy action
+pushes them: a `kamal deploy`, `kamal redeploy` or `kamal rollback` run by hand, or through the
+operations action's free `kamal` arguments, does not, so run the push first (see
 [adoption](adoption.md#running-kamal-by-hand-break-glass)).
 
 Symfony: the live web container usually has no `USER`, so `bin/console` there runs as root and

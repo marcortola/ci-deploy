@@ -80,11 +80,18 @@ a moment later see the new value. Upstream has two proposed fixes, neither in 2.
   the new secrets. After a failed push the window stays open until the next deploy; the
   `env-push-failed` error says so.
 - Kamal resolves the secrets twice per deploy, once for the push and once for `kamal deploy`, so
-  adapter-backed secrets (`kamal secrets fetch`) are fetched twice.
+  adapter-backed secrets (`kamal secrets fetch`) are fetched twice. The pre-connect hook also
+  runs twice, unless `skip-hooks` is set: once for the push, with `KAMAL_COMMAND=app` and
+  `KAMAL_SUBCOMMAND=boot_env`, and once for `kamal deploy`.
 - The push and `kamal deploy` take the lock separately. A deploy that takes it in between makes
-  this one's `kamal deploy` fail on the held lock, as any lock conflict does.
-- A `kamal deploy` run by hand does not push; the break-glass procedure in
-  [adoption](../adoption.md#running-kamal-by-hand-break-glass) runs `ci-deploy-push-env` first.
+  this one's `kamal deploy` fail on the held lock, as any lock conflict does. When no
+  per-destination concurrency group serializes the deploy runs, another run's push can also land
+  between this deploy's push and its `kamal deploy`, so this deploy's pre-deploy hook reads that
+  run's env files; its own `app boot` still writes its own.
+- Only the deploy action pushes. A `kamal deploy`, `kamal redeploy` or `kamal rollback` run by
+  hand, or through the operations action's free `kamal` arguments, does not; the break-glass
+  procedure in [adoption](../adoption.md#running-kamal-by-hand-break-glass) runs
+  `ci-deploy-push-env` first.
 
 ## Evidence and limits
 
@@ -96,8 +103,12 @@ before-deploy command, and `env-push-failed` with no deploy and no rollback
 script against the locked Kamal with no server: the command Kamal dispatches, the hook
 environment, `--skip-hooks` and the error reporting. The remote-consumption workflow checks the
 published action calls the push right before `deploy`. The integration suite changes a secret
-between two deploys to Docker-in-Docker hosts and checks that the pre-deploy hook's new
-container reads the new value and that the second host's env file holds it.
+between two deploys to two Docker-in-Docker hosts. Its pre-deploy hook starts a new container of
+the incoming image on each host, the primary through `ci_deploy_exec new-image` and the second
+host through `kamal app exec --hosts`, and the suite checks that both read the new value. Those
+reads run before `app boot`, which rewrites the env files after the hook, so only the push can
+have written the value they see; the second host's env file is also checked after the deploy,
+which alone would pass without the push.
 
 Not exercised by a test: the push meeting a held lock (Kamal's own `with_lock` path), a push that
 reaches some hosts and fails on others, more than one role per host, and adapter-backed secrets.

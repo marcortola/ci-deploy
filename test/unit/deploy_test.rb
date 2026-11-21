@@ -122,7 +122,7 @@ class DeployTest < Minitest::Test
     assert_equal "", @gh.outputs["previous-version"], "no rollback target is published before the image exists"
   end
 
-  def test_skip_hooks_is_passed_to_the_deploy_only_and_warned
+  def test_skip_hooks_reaches_the_deploy_but_not_the_build_and_is_warned
     @runner.on(%w[kamal app version], serving(["192.0.2.10", PREVIOUS]))
 
     deploy(skip_hooks: true)

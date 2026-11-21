@@ -174,7 +174,12 @@ expect_match "$hook" "^kamal_version=2\.10\.0$" "the hook runs the locked Kamal"
 expect_match "$hook" "bundle=$ROOT/Gemfile" "the hook runs with this revision's bundle"
 expect_match "$hook" "version=v2" "the hook sees the incoming version"
 expect_match "$hook" "^ok$" "the hook ran a command from the incoming image"
-expect_match "$hook" "^it-secret-v2$" "the pre-deploy hook's new container reads this deploy's secret"
+# `app boot` rewrites the env files after this hook, so only these reads, taken before boot, prove
+# the push reached each server; the env file checked below would hold the new secret without it.
+expect_match "$hook" "^primary: App Host: 127\.0\.0\.2$" "the pre-deploy hook read the primary"
+expect_match "$hook" "^primary: it-secret-v2$" "the pre-deploy hook's new container on the primary reads this deploy's secret"
+expect_match "$hook" "^second: App Host: 127\.0\.0\.3$" "the pre-deploy hook read the second server"
+expect_match "$hook" "^second: it-secret-v2$" "the pre-deploy hook's new container on the second server reads this deploy's secret"
 expect_match "$(web_env 127.0.0.3)" "^IT_SECRET=it-secret-v2$" "the second server's env file holds this deploy's secret"
 grep -q it-secret-v2 "$WORK/last.log" && fail "the deploy log shows the secret"
 ok "the deploy log shows no secret"

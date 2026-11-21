@@ -1,6 +1,7 @@
 #!/bin/sh
-# Integration hook: proves a nested hook reaches the same kamal and bundle as the deploy, and runs a
-# command from the incoming image through the shared helper.
+# Integration hook: proves a nested hook reaches the same kamal and bundle as the deploy, and runs
+# commands from the incoming image through the shared helper: one reads a secret, which must be
+# this deploy's value, since the env file is pushed before the hook runs.
 set -eu
 # shellcheck source=lib/sh/hooks.sh
 . "${CI_DEPLOY_HOOKS_LIB:?run through the ci-deploy setup action}/hooks.sh"
@@ -11,4 +12,5 @@ set -eu
     echo "bundle=${BUNDLE_GEMFILE:-}"
     echo "version=$KAMAL_VERSION"
 } >> "${IT_HOOK_LOG:?}"
+ci_deploy_exec new-image "printenv IT_SECRET" >> "$IT_HOOK_LOG"
 ci_deploy_exec new-image "cat /www/up" >> "$IT_HOOK_LOG"

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stand-in for bin/ci-deploy-push-env in the remote-consumption workflow: records its call in
+# $FAKE_KAMAL_LOG, in the fake Kamal's format and order, with the program name as its first line,
+# so the checks can place the push among the Kamal calls.
+set -eu
+: "${FAKE_KAMAL_LOG:?}"
+
+{
+    echo "--- call"
+    echo ci-deploy-push-env
+    for arg in "$@"; do printf '%s\n' "$arg"; done
+} >> "$FAKE_KAMAL_LOG"

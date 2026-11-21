@@ -12,7 +12,8 @@
 #      an explicit target;
 #   3. reboots the proxy to v0.9.0 through the operations catalog, checking both apps before and after;
 #   4. deploys through bin/ci-deploy: a prebuilt image, a Kamal build, a failed build (no host
-#      touched), a failed health check rolled back, with the hooks reaching the same kamal;
+#      touched), a failed health check rolled back, with the hooks reaching the same kamal and
+#      reading this deploy's secrets (the env files are pushed first);
 #   5. runs commands, and boots and reboots a persistent accessory.
 #
 # Everything it starts is named cid-it-* and removed on exit; CI_DEPLOY_IT_KEEP=1 keeps it running.
@@ -56,12 +57,16 @@ expect_match() { printf '%s' "$1" | grep -qE -- "$2" || fail "$3: '$2' not found
 export HOME="$WORK/home" XDG_CACHE_HOME="$WORK/home/.cache"
 mkdir -p "$HOME"
 export IT_SSH_KEY="$WORK/id_ed25519" IT_REGISTRY_PASSWORD=it-password
+# App A's one secret; the prebuilt deploy below changes it and its pre-deploy hook must see the change.
+export IT_SECRET=it-secret-v1
 ssh-keygen -q -t ed25519 -N '' -f "$IT_SSH_KEY"
 
 host_index() { case "$1" in 127.0.0.2) echo 1 ;; 127.0.0.3) echo 2 ;; esac; }
 # What app $2 answers on server $1, through that server's kamal-proxy.
 answer() { docker exec "$PREFIX-host$(host_index "$1")" wget -qO- -T 5 --header "Host: $2.example.test" http://127.0.0.1/ 2>/dev/null || echo unreachable; }
 proxy_version() { docker exec "$PREFIX-host$(host_index "$1")" docker inspect kamal-proxy --format '{{.Config.Image}}' 2>/dev/null | sed 's/.*://'; }
+# App A's web env file on server $1, as Kamal wrote it.
+web_env() { docker exec "$PREFIX-host$(host_index "$1")" cat /root/.kamal/apps/it-app-a/env/roles/web.env 2>/dev/null || echo missing; }
 
 step "Start the registry and two servers"
 docker network create "$NETWORK" >/dev/null
@@ -155,6 +160,8 @@ expect_eq "$(answer 127.0.0.3 a)" "app-a v1" "app A answers after the reboot on 
 
 step "Deploy a prebuilt image with hooks"
 : > "$WORK/hook.log"
+expect_match "$(web_env 127.0.0.3)" "^IT_SECRET=it-secret-v1$" "the second server holds the previous secret"
+export IT_SECRET=it-secret-v2
 ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v2 CI_DEPLOY_IN_ROLLBACK=off || { cat "$WORK/last.log"; fail "prebuilt deploy failed"; }
 expect_eq "$(out deploy-result)" success "deploy-result"
 expect_eq "$(out previous-version)" v1 "previous-version"
@@ -167,6 +174,10 @@ expect_match "$hook" "^kamal_version=2\.10\.0$" "the hook runs the locked Kamal"
 expect_match "$hook" "bundle=$ROOT/Gemfile" "the hook runs with this revision's bundle"
 expect_match "$hook" "version=v2" "the hook sees the incoming version"
 expect_match "$hook" "^ok$" "the hook ran a command from the incoming image"
+expect_match "$hook" "^it-secret-v2$" "the pre-deploy hook's new container reads this deploy's secret"
+expect_match "$(web_env 127.0.0.3)" "^IT_SECRET=it-secret-v2$" "the second server's env file holds this deploy's secret"
+grep -q it-secret-v2 "$WORK/last.log" && fail "the deploy log shows the secret"
+ok "the deploy log shows no secret"
 
 step "A prebuilt image that is not published is refused before any host is touched"
 status=0; ci app-a deploy CI_DEPLOY_IN_BUILD_MODE=prebuilt CI_DEPLOY_IN_VERSION=v9-missing CI_DEPLOY_IN_ROLLBACK=off || status=$?

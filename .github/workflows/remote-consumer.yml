@@ -4,9 +4,10 @@ name: Remote consumption
 # from this checkout. The pin is the newest commit that changed an action or its scripts; bump it
 # in the same pull request whenever one does, together with test/fixtures/revision-consumer (the
 # release procedure in docs/releasing.md). CI's script/check-remote-pin fails while it is stale.
-# Kamal is replaced by test/remote/kamal, which records its calls, so the scenarios check the
-# action wiring: one version, outputs, rollback, cleanup and reporting after a failure, the
-# re-raised result, and setup reporting its own failure to a local stand-in for Rollbar.
+# Kamal is replaced by test/remote/kamal and the env push by test/remote/ci-deploy-push-env, which
+# record their calls, so the scenarios check the action wiring: one version, the env push right
+# before the deploy, outputs, rollback, cleanup and reporting after a failure, the re-raised
+# result, and setup reporting its own failure to a local stand-in for Rollbar.
 
 on:
   pull_request:
@@ -49,7 +50,7 @@ jobs:
           grep -q '192.0.2.11' "$RUNNER_TEMP/config.yml"
           test "$(printf '%s' "$REGISTRY_PASSWORD" | wc -l)" -eq 1
 
-      - name: Put the recording Kamal first on PATH
+      - name: Put the recording Kamal and env push first on PATH
         run: |
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"
@@ -88,7 +89,7 @@ jobs:
           project-directory: test/fixtures/consumer
           vars: '{"WEB_SERVER_IPS":"192.0.2.10","DATABASE_SERVER_IPS":"192.0.2.30"}'
 
-      - name: Put the recording Kamal first on PATH
+      - name: Put the recording Kamal and env push first on PATH
         run: |
           echo "$GITHUB_WORKSPACE/test/remote" >> "$GITHUB_PATH"
           echo "FAKE_KAMAL_LOG=$RUNNER_TEMP/kamal.log" >> "$GITHUB_ENV"

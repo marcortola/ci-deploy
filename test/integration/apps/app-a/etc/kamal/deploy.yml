@@ -20,6 +20,8 @@ drain_timeout: 2
 env:
   clear:
     APP_NAME: app-a
+  secret:
+    - IT_SECRET
 
 registry:
   server: 127.0.0.1:55000

@@ -16,7 +16,7 @@ Released under the MIT licence; see `LICENSE`.
 | `dependabot-merge/` | Merges a Dependabot security fix inside the caret range with an open alert; optionally dispatches the deploy workflow. |
 | `revision-check/` | Fails unless a component references this repository only from top-level workflows (every file git knows about is scanned), all pinned to one full SHA. |
 | `lib/sh/hooks.sh` | Helpers Kamal hooks source to run a command from the incoming image or in the live container. |
-| `bin/` | `kamal` (the locked version), `ci-deploy-reconcile-removed-roles`, `ci-deploy-host-control`; on `PATH` after setup. |
+| `bin/` | `kamal` (the locked version), `ci-deploy-reconcile-removed-roles`, `ci-deploy-host-control`, `ci-deploy-push-env` (the env push before each deploy); on `PATH` after setup. |
 
 Every action finds its scripts through `github.action_path`, never through the consumer's checkout,
 so a component pinned to a SHA runs exactly that SHA's code.

@@ -32,6 +32,14 @@ Every call names the container explicitly; there is no default.
 | `new-image` | a disposable container from the image being deployed (`--version $KAMAL_VERSION`) | before boot, when the live container still runs the old code; for anything that must not share the live container's state |
 | `live-container` | the running container of the incoming version (`--reuse --version $KAMAL_VERSION`) | in the post-deploy hook only, once that container runs; before boot no such container exists, so the helper refuses it unless `KAMAL_RUNTIME` is set, which Kamal sets for post-deploy only |
 
+Both modes read this deploy's secrets. Kamal 2.10 uploads a role's secret env file only when
+`kamal deploy` boots the app, after the pre-deploy hook, so a `new-image` container there would
+start with the previous deploy's env file. The deploy action therefore pushes the env files
+(`ci-deploy-push-env`) right before `kamal deploy`, also with `skip-hooks`; see
+[design record 0002](design-records/0002-push-env-before-deploy.md). A `kamal deploy` run by hand
+does not push them: run the push first (see
+[adoption](adoption.md#running-kamal-by-hand-break-glass)).
+
 Symfony: the live web container usually has no `USER`, so `bin/console` there runs as root and
 can leave `var/cache/prod` owned by root, after which php-fpm fails every request. Use
 `new-image` for console commands.
